@@ -77,8 +77,8 @@
     --sidebar-foreground: oklch(0.148 0.004 228.8);
     --sidebar-primary: oklch(0.588 0.158 241.966);
     --sidebar-primary-foreground: oklch(0.977 0.013 236.62);
-    --sidebar-accent: oklch(0.963 0.002 197.1);
-    --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
+    --sidebar-accent: oklch(0.91 0.002 197.1);
+    --sidebar-accent-foreground: oklch(0.148 0.004 228.8);
     --sidebar-border: oklch(0.925 0.005 214.3);
     --sidebar-ring: oklch(0.723 0.014 214.4);
 }
@@ -127,4 +127,605 @@
   html {
     @apply font-sans;
     }
+}
+
+/* ============================================================
+   API Documentation Layout
+   ============================================================ */
+
+/* Docs shell */
+.docs-layout {
+  @apply flex min-h-screen;
+}
+
+/* Fixed left sidebar — desktop */
+.docs-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 260px;
+  flex-shrink: 0;
+  display: none;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background-color: var(--sidebar);
+  z-index: 30;
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+@media (min-width: 1024px) {
+  .docs-sidebar {
+    display: flex;
+  }
+}
+
+/* Mobile drawer overlay */
+.docs-sidebar-mobile {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.docs-sidebar-mobile-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background-color: var(--sidebar);
+  z-index: 50;
+  transform: translateX(0);
+  transition: transform 300ms ease-in-out;
+  overflow: hidden;
+}
+
+/* Main scrollable content — offset for sidebar */
+.docs-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+@media (min-width: 1024px) {
+  .docs-main {
+    margin-left: 260px;
+  }
+}
+
+/* Content column — max width + padding */
+.docs-content {
+  @apply px-6 py-12;
+}
+
+@media (min-width: 1024px) {
+  .docs-content {
+    @apply pl-16 pr-74;
+  }
+}
+
+/* Mobile top bar */
+.docs-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background-color: color-mix(in oklch, var(--background) 85%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+@media (min-width: 1024px) {
+  .docs-topbar {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .docs-main {
+    padding-top: 56px;
+  }
+}
+
+/* Anchor scroll offset */
+[data-endpoint-id] {
+  scroll-margin-top: 80px;
+}
+
+/* Endpoint card spacing */
+.endpoint-card {
+  @apply py-2;
+}
+
+/* ============================================================
+   Sidebar Navigation
+   ============================================================ */
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.sidebar-nav-section {
+  @apply px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 1px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--muted-foreground);
+  transition: background-color 150ms, color 150ms, border-color 150ms;
+  cursor: pointer;
+}
+
+.sidebar-nav-item:hover {
+  background-color: color-mix(in oklch, var(--sidebar-accent) 60%, transparent);
+  color: var(--foreground);
+}
+
+.sidebar-nav-item.active {
+  border-left-color: var(--sidebar-primary);
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Code Blocks
+   ============================================================ */
+
+.code-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: color-mix(in oklch, var(--muted) 60%, transparent);
+}
+
+.dark .code-block {
+  background-color: oklch(0.16 0.005 220);
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background-color: color-mix(in oklch, var(--muted) 40%, transparent);
+}
+
+.code-block pre {
+  overflow-x: auto;
+  padding: 14px 16px;
+  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', 'Fira Code', monospace);
+  font-size: 12px;
+  line-height: 1.65;
+  -webkit-overflow-scrolling: touch;
+  margin: 0;
+}
+
+.code-block-copy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  transition: background-color 150ms, color 150ms;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+.code-block-copy:hover {
+  background-color: var(--muted);
+  color: var(--foreground);
+}
+
+/* JSON token colors */
+.json-key    { color: oklch(0.65 0.15 50); }   /* orange */
+.json-string { color: oklch(0.58 0.15 150); }  /* green */
+.json-number { color: oklch(0.55 0.15 240); }  /* blue */
+.json-bool   { color: oklch(0.58 0.18 300); }  /* purple */
+.json-null   { color: var(--muted-foreground); }
+
+.dark .json-key    { color: oklch(0.78 0.12 55); }
+.dark .json-string { color: oklch(0.72 0.13 155); }
+.dark .json-number { color: oklch(0.72 0.13 245); }
+.dark .json-bool   { color: oklch(0.72 0.15 305); }
+
+/* ============================================================
+   Parameter Tables
+   ============================================================ */
+
+.param-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.param-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  padding: 8px 14px 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.param-table td {
+  padding: 10px 14px;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+}
+
+.param-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.param-table tbody tr:hover td {
+  background-color: color-mix(in oklch, var(--muted) 40%, transparent);
+}
+
+.param-required {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background-color: oklch(0.97 0.01 25);
+  color: oklch(0.5 0.18 25);
+}
+
+.dark .param-required {
+  background-color: oklch(0.22 0.05 25);
+  color: oklch(0.75 0.12 25);
+}
+
+.param-optional {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ============================================================
+   Endpoint Response / Error Status Badges
+   ============================================================ */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 700;
+}
+
+.status-2xx {
+  background-color: oklch(0.95 0.05 150);
+  color: oklch(0.38 0.12 150);
+}
+
+.status-4xx {
+  background-color: oklch(0.97 0.05 75);
+  color: oklch(0.5 0.14 75);
+}
+
+.status-5xx {
+  background-color: oklch(0.97 0.04 25);
+  color: oklch(0.48 0.18 25);
+}
+
+.dark .status-2xx {
+  background-color: oklch(0.22 0.06 150);
+  color: oklch(0.72 0.12 150);
+}
+
+.dark .status-4xx {
+  background-color: oklch(0.24 0.06 75);
+  color: oklch(0.78 0.12 75);
+}
+
+.dark .status-5xx {
+  background-color: oklch(0.22 0.05 25);
+  color: oklch(0.75 0.12 25);
+}
+
+/* ============================================================
+   Auth Banner
+   ============================================================ */
+
+.auth-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: color-mix(in oklch, var(--accent) 50%, transparent);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+/* ============================================================
+   Error Table
+   ============================================================ */
+
+.error-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.error-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  padding: 8px 14px;
+  background-color: color-mix(in oklch, var(--muted) 50%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.error-table td {
+  padding: 10px 14px;
+  vertical-align: top;
+  border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+}
+
+.error-table tbody tr:first-child td {
+  border-top: none;
+}
+
+/* ============================================================
+   Code Example (JS usage snippets)
+   ============================================================ */
+
+.code-example-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: color-mix(in oklch, var(--muted) 55%, transparent);
+}
+
+.code-example-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background-color: color-mix(in oklch, var(--muted) 70%, transparent);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.code-example-tab {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+
+.code-example-tab:hover {
+  background-color: var(--accent);
+  color: var(--foreground);
+}
+
+.code-example-tab.active {
+  background-color: var(--accent);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.code-block-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.code-block-copy-btn:hover {
+  background-color: var(--accent);
+  color: var(--foreground);
+}
+
+.code-example-pre {
+  overflow-x: auto;
+  padding: 16px 18px;
+  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', 'Fira Code', monospace);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--foreground);
+  margin: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* JS token colors — light theme */
+.js-comment  { color: oklch(0.52 0.03 230); font-style: italic; }
+.js-string   { color: oklch(0.42 0.14 150); }
+.js-keyword  { color: oklch(0.42 0.18 280); }
+.js-number   { color: oklch(0.42 0.15 55); }
+
+/* JS token colors — dark theme */
+.dark .js-comment  { color: oklch(0.58 0.03 230); font-style: italic; }
+.dark .js-string   { color: oklch(0.72 0.13 155); }
+.dark .js-keyword  { color: oklch(0.72 0.15 290); }
+.dark .js-number   { color: oklch(0.72 0.13 60); }
+
+/* ============================================================
+   Custom Scrollbars — applied globally across all scrollable areas
+   ============================================================ */
+
+/* ── Global page scrollbar (html / body) ── */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+html::-webkit-scrollbar {
+  width: 6px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+/* ── Docs main content scroll ── */
+.docs-main {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.docs-main::-webkit-scrollbar {
+  width: 6px;
+}
+
+.docs-main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-main::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+.docs-main::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+/* ── Sidebar nav scroll ── */
+.docs-sidebar,
+.docs-sidebar-mobile-panel,
+.sidebar-nav {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.docs-sidebar::-webkit-scrollbar,
+.docs-sidebar-mobile-panel::-webkit-scrollbar,
+.sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.docs-sidebar::-webkit-scrollbar-track,
+.docs-sidebar-mobile-panel::-webkit-scrollbar-track,
+.sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-sidebar::-webkit-scrollbar-thumb,
+.docs-sidebar-mobile-panel::-webkit-scrollbar-thumb,
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+.docs-sidebar::-webkit-scrollbar-thumb:hover,
+.docs-sidebar-mobile-panel::-webkit-scrollbar-thumb:hover,
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+/* ── Code blocks — horizontal scroll ── */
+.code-block pre,
+.code-example-pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.code-block pre::-webkit-scrollbar,
+.code-example-pre::-webkit-scrollbar {
+  height: 4px;
+}
+
+.code-block pre::-webkit-scrollbar-track,
+.code-example-pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.code-block pre::-webkit-scrollbar-thumb,
+.code-example-pre::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+.code-block pre::-webkit-scrollbar-thumb:hover,
+.code-example-pre::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+/* ── Tables with overflow-x (error/param tables on small screens) ── */
+.overflow-x-auto {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar {
+  height: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
 }
