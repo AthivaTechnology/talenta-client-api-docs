@@ -27,7 +27,9 @@ export function CodeExample({ examples, showOriginNote = false, originNote = nul
 
   if (!examples || examples.length === 0) return null
 
-  const current = examples[active]
+  const safeActive = active < examples.length ? active : 0
+  const current = examples[safeActive]
+  if (!current) return null
 
   const handleCopy = () => {
     navigator.clipboard.writeText(current.code).then(() => {

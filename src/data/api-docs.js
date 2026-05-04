@@ -31,9 +31,16 @@ export const API_SECTIONS = [
         codeExamples: [
           {
             title: "JavaScript",
-            code: `const res = await fetch('https://talenta.athivaone.com/api/v1/')
-const { status, service } = await res.json()
-console.log(status) // "ok"`,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const res = await fetch(\`\${BASE}/\`)
+const data = await res.json()
+
+// Response:
+// data.status  → "ok"
+// data.service → "Talenta API"
+// data.env     → "production"
+console.log(data.status) // "ok"`,
           },
         ],
         errorCodes: null,
@@ -70,11 +77,32 @@ console.log(status) // "ok"`,
         codeExamples: [
           {
             title: "JavaScript",
-            code: `const res = await fetch('https://talenta.athivaone.com/api/v1/health')
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const res = await fetch(\`\${BASE}/health\`)
 const { status, database } = await res.json()
 
 if (status !== 'healthy') {
   console.error('DB unreachable:', database)
+}`,
+          },
+          {
+            title: "React (useEffect)",
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const [health, setHealth] = useState(null)
+
+useEffect(() => {
+  axios.get(\`\${BASE}/health\`)
+    .then(({ data }) => setHealth(data))
+}, [])
+
+// Response fields:
+// health.status   → "healthy" | "unhealthy"
+// health.database → "connected" | "Connection timeout: could not connect to server"
+
+if (health?.status !== 'healthy') {
+  console.error('DB unreachable:', health?.database)
 }`,
           },
         ],
@@ -247,15 +275,26 @@ events.forEach(event => {
           },
           {
             title: "React (useEffect)",
-            code: `useEffect(() => {
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+useEffect(() => {
   axios.get(\`\${BASE}/site/events\`)
     .then(({ data }) => {
       setClientName(data.client_name)
       setEvents(data.data)
     })
-    .catch(err => setError('Failed to load events'))
+    .catch(() => setError('Failed to load events'))
     .finally(() => setLoading(false))
-}, [])`,
+}, [])
+
+// Response fields per event:
+// event.id             → "ev_8187234"
+// event.name           → "Desert Challenge 2026"
+// event.start.date     → "2026-04-30"
+// event.start.time     → "17:30"
+// event.venue.name     → "Featherlite"
+// event.total_remaining → 79
+// event.ticket_types   → array of ticket type objects`,
           },
         ],
         errorCodes: [
@@ -277,7 +316,7 @@ events.forEach(event => {
         path: "/site/events/{event_id}",
         title: "Get Event Detail",
         description:
-          "Returns full event details including all ticket types with real-time availability counts. Held tickets (active 10-minute holds) are deducted from the available quantity. This is the primary endpoint for rendering an event page with a ticket purchase flow. Expired holds are released automatically in the background on each call.",
+          "Returns details for a specific event, including its ticket types and availability.",
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header.",
@@ -411,60 +450,40 @@ events.forEach(event => {
         ],
         codeExamples: [
           {
-            title: "Adaptive polling",
-            note: "Three-speed strategy based on the actual frontend implementation: (1) First check after initial load → always 30 s (isFirstPoll=true catches a hold created just before the page opened). (2) holds active (any ticket_type.held_count > 0) → poll every 30 s, time-sensitive — tracks when the 10-min hold expires and inventory becomes available again. (3) No holds → poll every 60 s — saves requests when nothing is time-sensitive, but still keeps data fresh. Skip the fetch entirely when document.visibilityState is 'hidden' — the tab is not visible so there is no user to update; resume immediately on visibilitychange to 'visible'. Also re-fetch on pageshow with e.persisted — this handles the browser Back button restoring a frozen bfcache snapshot after the user returns from Stripe checkout (without this, the page shows stale Sold Out / held counts). Best practice: when a ticket is isHeldOut (available ≤ 0 and held_count > 0) show the message 'May become available — page updates automatically' so the user knows not to manually refresh.",
-            code: `// 30s when holds are active, 60s when idle — saves requests while staying responsive
-const POLL_FAST = 30_000
-const POLL_SLOW = 60_000
-let timer = null
+            title: "JavaScript",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
-const schedulePoll = (hasHolds, isFirstPoll = false) => {
-  clearTimeout(timer)
-  timer = setTimeout(fetchAndReschedule, hasHolds || isFirstPoll ? POLL_FAST : POLL_SLOW)
-}
+const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
+const { name, start, venue, ticket_types, total_remaining } = data
 
-const fetchAndReschedule = async () => {
-  if (document.visibilityState === 'hidden') return // skip when tab is inactive
-  const { data } = await axios.get(\`/site/events/\${eventId}\`)
-  setEvent(data)
-  const hasHolds = data.ticket_types.some(t => t.held_count > 0)
-  schedulePoll(hasHolds)
-}
+console.log(\`\${name} — \${total_remaining} tickets left\`)
 
-// Initial load
-const { data } = await axios.get(\`/site/events/\${eventId}\`)
-setEvent(data)
-schedulePoll(data.ticket_types.some(t => t.held_count > 0), true)
-
-// Resume immediately when user switches back to this tab
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') fetchAndReschedule()
-})
-
-// Re-fetch after bfcache restore (browser Back button from Stripe)
-window.addEventListener('pageshow', e => {
-  if (e.persisted) fetchAndReschedule()
+ticket_types.forEach(tt => {
+  console.log(\`\${tt.name}: \${tt.quantity_available} available\`)
 })`,
           },
           {
-            title: "Availability display",
-            note: "isHeldOut is the most important state to handle: available = 0 but held_count > 0 means every remaining ticket is currently inside an active 10-minute checkout hold. Do NOT show 'Sold Out' — these tickets may return to inventory if the hold expires or is cancelled. Show '⏳ N being processed' and add a sub-text like 'May become available — page updates automatically' to let the user know the page is polling in the background (every 30 s when holds are active) so they do not need to refresh manually.",
-            code: `// Map ticket type fields to UI state
-event.ticket_types.forEach(tt => {
-  const available = tt.quantity_available     // remaining after holds
-  const held      = tt.held_count             // active 10-min holds
-  const capacity  = tt.quantity              // total capacity
-  const sold      = tt.quantity_sold         // issued tickets
+            title: "React (useEffect)",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
-  const isSoldOut  = available <= 0 && held === 0 && capacity > 0
-  const isHeldOut  = available <= 0 && held > 0   // "being processed"
-  const isLow      = available > 0 && available <= 10
+const [event, setEvent] = useState(null)
 
-  // Show correct badge
-  if (isSoldOut)  return 'Sold Out'
-  if (isHeldOut)  return \`⏳ \${held} being processed\`
-  if (isLow)      return \`Last \${available} tickets\`
-})`,
+useEffect(() => {
+  axios.get(\`\${BASE}/site/events/\${eventId}\`)
+    .then(({ data }) => setEvent(data))
+    .catch(() => setError('Event not found'))
+}, [eventId])
+
+// Response fields:
+// event.name                       → "Desert Challenge 2026"
+// event.start.date / .time         → "2026-04-30" / "17:30"
+// event.venue.name                 → "Featherlite"
+// event.total_remaining            → 79
+// event.ticket_types[].name        → "General Admission"
+// event.ticket_types[].price       → 1000  (cents)
+// event.ticket_types[].quantity_available → 50`,
           },
         ],
         errorCodes: [
@@ -540,17 +559,38 @@ event.ticket_types.forEach(tt => {
         codeExamples: [
           {
             title: "JavaScript",
-            code: `const email = 'user@example.com'
-const { data } = await axios.get('/site/bookings', {
-  params: { email }   // axios URL-encodes automatically
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const { data } = await axios.get(\`\${BASE}/site/bookings\`, {
+  params: { email: 'user@example.com' }
 })
 
-const { bookings, customer_email, total_bookings } = data
+const { bookings, total_bookings } = data
 
 bookings.forEach(b => {
   console.log(b.event_name, b.ticket_type_name, b.status)
   // "Desert Challenge 2026"  "Free"  "complete"
 })`,
+          },
+          {
+            title: "React (useEffect)",
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const [bookings, setBookings] = useState([])
+
+useEffect(() => {
+  if (!email) return
+  axios.get(\`\${BASE}/site/bookings\`, { params: { email } })
+    .then(({ data }) => setBookings(data.bookings))
+}, [email])
+
+// Response fields per booking:
+// booking.event_name        → "Desert Challenge 2026"
+// booking.ticket_type_name  → "General Admission"
+// booking.quantity          → 1
+// booking.total_amount_cents → 10000  ($100.00)
+// booking.status            → "complete"
+// booking.created_at        → "2026-04-30T17:47:46"`,
           },
         ],
         errorCodes: [
@@ -579,7 +619,7 @@ bookings.forEach(b => {
         path: "/site/checkout/session",
         title: "Create Checkout Session",
         description:
-          "Initiates a checkout session by placing a 10-minute time-limited hold on the requested tickets to prevent overselling. For paid events, returns a Stripe Checkout URL to redirect the user to. For free events, immediately completes the booking, issues tickets, and sends a confirmation email — no redirect needed. Holds are automatically released after 10 minutes if payment is not completed. Pass customer_timezone (IANA format, e.g. 'Asia/Kolkata') so that refund confirmation emails show dates in the customer's local time rather than UTC.",
+          "Initiates a checkout session by placing a 10-minute hold on the requested tickets to prevent overselling. For paid events, returns a Stripe Checkout URL to redirect the user. For free events, immediately completes the booking, issues tickets, and sends a confirmation email — no redirect needed.\n\n⚠️ Hold vs Stripe session timing: The ticket hold expires after 10 minutes — but the Stripe Checkout URL itself remains active for up to 30 minutes. This means a customer can still complete payment on Stripe after the 10-minute hold has expired. In that case the backend detects the expired hold, immediately refunds the charge via Stripe, and sends a refund notification email. The customer will NOT receive their tickets. Make this window clear in your checkout UI — show a visible 10-minute countdown so customers know they must complete payment within that window.",
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header.",
@@ -625,64 +665,66 @@ bookings.forEach(b => {
         ],
         codeExamples: [
           {
-            title: "Full checkout flow",
-            note: "Always pass customer_timezone so refund emails show the correct local time. Store stripeUrl in sessionStorage alongside the hold data — this lets you detect a browser Back from Stripe and show 'Resume Payment' instead of creating a duplicate hold.",
-            code: `const { data } = await axios.post('/site/checkout/session', {
+            title: "JavaScript",
+            note: "Store the full session data in sessionStorage — name, email, phone, and ticketsParam are used to pre-fill the form if the user returns via browser Back or Stripe Cancel.\n\n⏱ Timing: The ticket hold is 10 minutes. The Stripe Checkout session is valid for up to 30 minutes. Two expiry scenarios: (1) Customer pays after the 10-minute hold window but within the Stripe session — the backend detects the hold is expired, auto-refunds the charge, and sends a refund email. The event still has tickets but the customer does not receive them. (2) Customer tries to pay after 30 minutes — the Stripe session itself is closed and Stripe shows an expiry error. Show a 10-minute countdown in your UI.",
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const { data } = await axios.post(\`\${BASE}/site/checkout/session\`, {
   event_id: 'ev_8187172',
   items: [{ ticket_type_id: 'tt_6308858', quantity: 1 }],
   customer_email: 'user@example.com',
   customer_name: 'John Doe',
   customer_phone: '+911234567890',
   customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-  // e.g. "Asia/Kolkata" — stored in DB, used for refund email dates
 })
 
 if (data.status === 'complete') {
-  // Free ticket — booking already confirmed
+  // Free ticket — booking confirmed immediately
   window.location.href = data.url  // → /checkout/success?session_id=...
   return
 }
 
-// Paid ticket — store hold + Stripe URL so Back button can resume
+// Paid ticket — save session data for Back button / Cancel page pre-fill
 sessionStorage.setItem('tt_hold', JSON.stringify({
-  sessionId: data.session_id,
-  expiresAt: data.hold_expires_at,   // ISO 8601 — used for countdown
-  stripeUrl:  data.url,              // saved so Back button can re-use same session
-  eventId:    eventId,
+  sessionId:    data.session_id,
+  expiresAt:    data.hold_expires_at,
+  stripeUrl:    data.url,
+  eventId:      eventId,
+  ticketsParam: ticketsParam,   // JSON string — reconstructs checkout URL
+  name:         name,
+  email:        email,
+  phone:        phone,
 }))
 
-// Redirect to Stripe Checkout — user has 10 min to complete payment
+// Redirect to Stripe — user has 10 min to complete payment
 window.location.href = data.url`,
           },
           {
-            title: "Cross-tab lock",
-            code: `// Prevent two tabs from creating duplicate holds simultaneously
-const LOCK_KEY = 'athiva_checkout_lock'
-const LOCK_TTL = 35_000 // ms
+            title: "React (useEffect + form)",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
-const tryAcquireLock = () => {
-  const raw = localStorage.getItem(LOCK_KEY)
-  if (raw && Date.now() - Number(raw) < LOCK_TTL) return false
-  localStorage.setItem(LOCK_KEY, String(Date.now()))
-  return true
-}
-const releaseLock = () => localStorage.removeItem(LOCK_KEY)
-
-// Before calling POST /site/checkout/session:
-if (!tryAcquireLock()) {
-  // Another tab is mid-checkout — wait for it to finish
-  await new Promise(resolve => {
-    window.addEventListener('storage', function handler(e) {
-      if (e.key === LOCK_KEY && !e.newValue) {
-        window.removeEventListener('storage', handler)
-        resolve()
-      }
-    })
+const handleSubmit = async () => {
+  const { data } = await axios.post(\`\${BASE}/site/checkout/session\`, {
+    event_id: eventId,
+    items: tickets.map(t => ({ ticket_type_id: t.id, quantity: t.qty })),
+    customer_email: email,
+    customer_name: name,
+    customer_phone: phone,
+    customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   })
-}
 
-// ... call API ...
-releaseLock()`,
+  if (data.hold_expires_at) {
+    sessionStorage.setItem('tt_hold', JSON.stringify({
+      sessionId: data.session_id,
+      expiresAt: data.hold_expires_at,
+      stripeUrl: data.url,
+      eventId, ticketsParam, name, email, phone,
+    }))
+  }
+
+  window.location.href = data.url
+}`,
           },
         ],
         errorCodes: [
@@ -719,7 +761,7 @@ releaseLock()`,
         path: "/site/checkout/session/{session_id}",
         title: "Get Session Status",
         description:
-          "Retrieves the current status of a checkout session. Poll this endpoint on your success page (every 3 s, max 10 attempts) to confirm payment processing after Stripe redirects the user back. Possible statuses: complete (payment confirmed, tickets issued, email sent), pending (webhook not yet arrived — keep polling), pending_recovery (missed webhook detected, backend is auto-recovering — keep polling), failed (payment could not be verified), refunded (ticket hold expired while payment was processing — full refund has been auto-issued and a refund notification email was sent to the customer).",
+          "Retrieves the current status of a checkout session. Poll this endpoint on your success page (every 3 s, max 10 attempts) to confirm payment processing after Stripe redirects the user back. Possible statuses: complete (payment confirmed, tickets issued, email sent), pending (webhook not yet arrived — keep polling), pending_recovery (missed webhook detected, backend is auto-recovering — keep polling), failed (payment could not be verified), refunded (ticket hold expired while payment was processing — full refund has been auto-issued and a refund notification email was sent to the customer; if a ticket was already issued in TicketTailor it is automatically voided before the refund is processed).",
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: [
@@ -847,8 +889,42 @@ releaseLock()`,
         ],
         codeExamples: [
           {
+            title: "JavaScript",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const { data } = await axios.get(\`\${BASE}/site/checkout/session/\${sessionId}\`)
+
+// Response fields:
+// data.session_id              → "cs_live_abc123xyz"
+// data.status                  → "complete" | "pending" | "pending_recovery" | "refunded" | "failed" | "expired"
+// data.payments[0].event_id    → "ev_8187172"
+// data.payments[0].quantity    → 2
+// data.payments[0].total_amount_cents → 10000  ($100.00)
+// data.payments[0].status      → matches session status
+
+if (data.status === 'complete') {
+  console.log('Tickets issued for', data.payments[0].event_id)
+}`,
+          },
+          {
+            title: "React (useEffect)",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const [session, setSession] = useState(null)
+
+useEffect(() => {
+  axios.get(\`\${BASE}/site/checkout/session/\${sessionId}\`)
+    .then(({ data }) => setSession(data))
+}, [sessionId])
+
+// session.status → "complete" | "pending" | "pending_recovery" | "refunded" | "failed"
+// session.payments → array of payment objects`,
+          },
+          {
             title: "Success page polling",
-            note: "Stripe redirects the user to your success page BEFORE the payment webhook arrives at the backend (usually 1–5 s later). Tickets are only issued after the backend processes that webhook — so at the moment the user lands on the success page, their tickets are not yet issued. Poll every 3 s up to 10 times (30 s total). Handle all 5 terminal statuses: complete (show success), refunded (hold expired mid-payment — full refund issued, show refund notice), failed (payment failed — show error). If after 10 attempts status is still pending/expired, check lastKnownStatus: pending_recovery means auto-recovery is running (show 'check your email shortly'); otherwise show hard failure. Never show a success screen without first confirming status === 'complete'.",
+            note: "Stripe redirects the user to your success page BEFORE the payment webhook arrives at the backend (usually 1–5 s later). Poll every 3 s up to 10 times (30 s total). Never show a success screen without first confirming status === 'complete'.",
             code: `let attempts = 0
 const MAX = 10
 let cancelled = false
@@ -931,7 +1007,7 @@ if (data.status === 'expired') { showProcessingRefund() }`,
         path: "/site/checkout/session/{session_id}/release-hold",
         title: "Release Ticket Hold",
         description:
-          "Explicitly releases a ticket hold before the 10-minute automatic expiry. Call this when a user clicks Cancel or navigates away from your checkout page to immediately free up inventory for other buyers rather than waiting for the timeout. This endpoint is best-effort — it always returns 200 even if the hold was already released or expired.",
+          "Releases a ticket hold. Holds expire automatically after 10 minutes, but calling this early frees up the tickets immediately for other buyers. Always returns 200 even if the hold is already released or expired.",
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: [
@@ -955,41 +1031,57 @@ if (data.status === 'expired') { showProcessingRefund() }`,
         ],
         codeExamples: [
           {
-            title: "Countdown timer",
-            note: "When POST /site/checkout/session succeeds, the response includes hold_expires_at (ISO timestamp, 10 minutes from now). Store it in sessionStorage. This timer ticks every second from 600 → 0. At exactly 0 seconds the 'released' flag fires POST release-hold once (fire-and-forget, .catch(() => {}) so it never blocks the UI). The backend immediately calls DELETE /holds/{id} on TicketTailor, freeing those reserved tickets for other buyers — no need to wait for the 10-minute auto-expiry. The backend also deletes the pending Payment row from the database.",
-            code: `// Fire-and-forget release when the 10-min countdown hits zero
+            title: "JavaScript",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+const { data } = await axios.post(
+  \`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`
+)
+
+// Response:
+// data.released → true
+console.log(data.released) // true`,
+          },
+          {
+            title: "React (useEffect)",
+            note: null,
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+// On checkout page UI Back button — clear storage, release hold, navigate to event
+const handleBack = () => {
+  try {
+    const raw = sessionStorage.getItem('tt_hold')
+    if (raw) {
+      const hold = JSON.parse(raw)
+      sessionStorage.removeItem('tt_hold')
+      if (hold.sessionId) {
+        fetch(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`, {
+          method: 'POST'
+        }).catch(() => {})
+      }
+    }
+  } catch {}
+  navigate(\`/events/\${eventId}\`)  // never use navigate(-1) — history[-1] may be Stripe
+}`,
+          },
+          {
+            title: "Auto-release on expiry",
+            note: "Use a single setTimeout (not setInterval) that fires at the exact expiry timestamp. No countdown is shown to the user — the release happens silently in the background.",
+            code: `// Silent background release when hold expires
 const holdData = JSON.parse(sessionStorage.getItem('tt_hold') || 'null')
 if (!holdData) return
 
-let released = false
-const tick = () => {
-  const secsLeft = Math.max(0, Math.floor((new Date(holdData.expiresAt) - Date.now()) / 1000))
-  setTimeLeft(secsLeft)
-  if (secsLeft === 0 && !released) {
-    released = true
-    // Best-effort — always returns 200, frees inventory for other buyers immediately
-    axios.post(\`/site/checkout/session/\${holdData.sessionId}/release-hold\`).catch(() => {})
-  }
-}
-tick()
-const timer = setInterval(tick, 1000)
-return () => clearInterval(timer)`,
-          },
-          {
-            title: "On cancel",
-            note: "When the user clicks Cancel (or Back) on the Stripe Checkout page, Stripe redirects them to your cancel_url. On that cancel page, immediately read sessionStorage for the tt_hold data that was saved when the checkout session was created, then fire POST release-hold with no await and .catch(() => {}) so navigation is never blocked. The backend deletes the TicketTailor hold immediately, freeing those tickets for other buyers without waiting for the 10-minute timeout. Always clear sessionStorage after calling release so a page refresh does not fire a duplicate release.",
-            code: `// Call when user clicks Cancel or navigates away from checkout
-const releaseHold = (sessionId) => {
-  // Fire-and-forget — don't await, don't block navigation
-  fetch(\`/site/checkout/session/\${sessionId}/release-hold\`, { method: 'POST' })
-    .catch(() => {}) // always returns 200, ignore errors
-}
+const msLeft = Math.max(0, new Date(holdData.expiresAt) - Date.now())
 
-// Example: release on Back button click
-backButton.addEventListener('click', () => {
-  releaseHold(sessionId)
-  navigate(-1)
-})`,
+const t = setTimeout(() => {
+  sessionStorage.removeItem('tt_hold')
+  // Best-effort — always returns 200
+  axios.post(\`\${BASE}/site/checkout/session/\${holdData.sessionId}/release-hold\`)
+    .catch(() => {})
+}, msLeft)
+
+return () => clearTimeout(t)`,
           },
         ],
         errorCodes: null,
@@ -1049,6 +1141,18 @@ backButton.addEventListener('click', () => {
               note: "Two buyers complete payment at nearly the same time. The second buyer's webhook arrives and finds no inventory left. The backend immediately refunds the charge and sends the refund email. This is the only refund path that cannot be prevented — it is a deliberate safety net.",
             },
           },
+          {
+            status: 200,
+            description: "Trigger 4 — Hold expired but ticket was already issued (post-hold payment completed)",
+            body: {
+              trigger: "Customer completes Stripe payment after the 10-minute hold window (Stripe URL still valid up to 30 min)",
+              stripe_action: "tt.void_ticket(tt_ticket_id) → stripe.Refund.create({ payment_intent: pi_xxx })",
+              session_status_before: "pending (hold expired, ticket may already be issued in TT)",
+              session_status_after: "refunded",
+              email_sent: true,
+              note: "The Stripe Checkout URL remains active for up to 30 minutes even after the 10-minute ticket hold expires. If a customer completes payment in that 10–30 minute window, the webhook arrives and the backend checks whether the hold is still valid. If the hold has expired: (1) if a TT ticket was already issued, it is immediately voided via the TT API before processing the refund; (2) the Stripe charge is refunded via the API; (3) payments are set to status='refunded'; (4) a refund notification email is sent. The customer will not keep the ticket.",
+            },
+          },
         ],
         codeExamples: [
           {
@@ -1079,7 +1183,7 @@ const paid_at = pi.latest_charge?.created           // Unix timestamp
           },
           {
             title: "Detecting refund on success page",
-            note: "If the customer's hold timer expired while they were on the Stripe payment page, Stripe still collects payment — but the backend detects the hold has expired and immediately refunds. The session status on GET /session/:id will be 'refunded'. Show a clear explanation: the reservation expired, a full refund has been issued, check your email. Do NOT show a generic error — the customer's money IS being returned.",
+            note: "The Stripe Checkout URL stays active for up to 30 minutes even though the ticket hold expires after 10 minutes. If the customer completes payment in that 10–30 minute window, Stripe still collects payment — but the backend detects the expired hold, voids any already-issued TT ticket, then immediately refunds the charge. The session status on GET /session/:id will be 'refunded'. Show a clear, empathetic explanation: the reservation expired, a full refund has been issued, check your email. Do NOT show a generic payment error — the customer's money IS being returned.",
             code: `// On your /checkout/success page:
 const { data } = await axios.get(\`/site/checkout/session/\${sessionId}\`)
 
