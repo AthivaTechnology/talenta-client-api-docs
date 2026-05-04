@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { Menu, Zap, Activity, Globe, ShoppingCart, AlertTriangle } from "lucide-react"
+import { Menu, Zap, Activity, Globe, ShoppingCart, AlertTriangle, RefreshCcw, RotateCcw } from "lucide-react"
 import { API_SECTIONS, BASE_URL } from "@/data/api-docs"
 import { Sidebar } from "@/components/Sidebar"
 import { EndpointCard } from "@/components/EndpointCard"
@@ -186,7 +186,7 @@ export function App() {
 
           {/* ── Sections ──────────────────────────────────────── */}
           {API_SECTIONS.map((section) => {
-            const SectionIcon = { Activity, Globe, ShoppingCart }[section.icon]
+            const SectionIcon = { Activity, Globe, ShoppingCart, RefreshCcw, RotateCcw }[section.icon]
             return (
               <section key={section.id} className="mb-16">
                 {/* Section heading */}

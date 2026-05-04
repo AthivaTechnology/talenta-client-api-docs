@@ -6,6 +6,7 @@ const METHOD_STYLES = {
   DELETE: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
   PATCH: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
   PUT: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
+  GUIDE: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300",
 }
 
 const SIZE_STYLES = {

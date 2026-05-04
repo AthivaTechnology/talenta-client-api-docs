@@ -1,10 +1,10 @@
-import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, HelpCircle } from "lucide-react"
+import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, HelpCircle, RefreshCcw, RotateCcw } from "lucide-react"
 import { useTheme } from "@/components/theme-provider.jsx"
 import { MethodBadge } from "@/components/MethodBadge"
 import { BASE_URL } from "@/data/api-docs"
 import { cn } from "@/lib/utils"
 
-const SECTION_ICONS = { Activity, Globe, ShoppingCart }
+const SECTION_ICONS = { Activity, Globe, ShoppingCart, RefreshCcw, RotateCcw }
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme()

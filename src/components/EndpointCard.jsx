@@ -26,9 +26,11 @@ export function EndpointCard({ endpoint }) {
       {/* Method + path */}
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
         <MethodBadge method={endpoint.method} />
-        <code className="rounded-md bg-muted px-2.5 py-1 font-mono text-[13px] text-foreground">
-          {endpoint.path}
-        </code>
+        {endpoint.path && (
+          <code className="rounded-md bg-muted px-2.5 py-1 font-mono text-[13px] text-foreground">
+            {endpoint.path}
+          </code>
+        )}
       </div>
 
       {/* Title */}

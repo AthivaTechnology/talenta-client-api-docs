@@ -579,7 +579,7 @@ bookings.forEach(b => {
         path: "/site/checkout/session",
         title: "Create Checkout Session",
         description:
-          "Initiates a checkout session by placing a 10-minute time-limited hold on the requested tickets to prevent overselling. For paid events, returns a Stripe Checkout URL to redirect the user to. For free events, immediately completes the booking, issues tickets, and sends a confirmation email — no redirect needed. Holds are automatically released after 10 minutes if payment is not completed.",
+          "Initiates a checkout session by placing a 10-minute time-limited hold on the requested tickets to prevent overselling. For paid events, returns a Stripe Checkout URL to redirect the user to. For free events, immediately completes the booking, issues tickets, and sends a confirmation email — no redirect needed. Holds are automatically released after 10 minutes if payment is not completed. Pass customer_timezone (IANA format, e.g. 'Asia/Kolkata') so that refund confirmation emails show dates in the customer's local time rather than UTC.",
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header.",
@@ -597,6 +597,7 @@ bookings.forEach(b => {
           customer_email: "user@example.com",
           customer_name: "John Doe",
           customer_phone: "+911234567890",
+          customer_timezone: "Asia/Kolkata",
         },
         responses: [
           {
@@ -625,12 +626,15 @@ bookings.forEach(b => {
         codeExamples: [
           {
             title: "Full checkout flow",
+            note: "Always pass customer_timezone so refund emails show the correct local time. Store stripeUrl in sessionStorage alongside the hold data — this lets you detect a browser Back from Stripe and show 'Resume Payment' instead of creating a duplicate hold.",
             code: `const { data } = await axios.post('/site/checkout/session', {
   event_id: 'ev_8187172',
   items: [{ ticket_type_id: 'tt_6308858', quantity: 1 }],
   customer_email: 'user@example.com',
   customer_name: 'John Doe',
-  customer_phone: '+911234567890'
+  customer_phone: '+911234567890',
+  customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  // e.g. "Asia/Kolkata" — stored in DB, used for refund email dates
 })
 
 if (data.status === 'complete') {
@@ -639,13 +643,13 @@ if (data.status === 'complete') {
   return
 }
 
-// Paid ticket — store hold expiry for countdown timer
-if (data.hold_expires_at) {
-  sessionStorage.setItem('tt_hold', JSON.stringify({
-    sessionId: data.session_id,
-    expiresAt: data.hold_expires_at   // ISO 8601 string
-  }))
-}
+// Paid ticket — store hold + Stripe URL so Back button can resume
+sessionStorage.setItem('tt_hold', JSON.stringify({
+  sessionId: data.session_id,
+  expiresAt: data.hold_expires_at,   // ISO 8601 — used for countdown
+  stripeUrl:  data.url,              // saved so Back button can re-use same session
+  eventId:    eventId,
+}))
 
 // Redirect to Stripe Checkout — user has 10 min to complete payment
 window.location.href = data.url`,
@@ -715,7 +719,7 @@ releaseLock()`,
         path: "/site/checkout/session/{session_id}",
         title: "Get Session Status",
         description:
-          "Retrieves the current status of a checkout session. Poll this endpoint on your success page (with exponential backoff, max 10 attempts) to confirm payment processing after Stripe redirects the user back. If the session shows pending_recovery, a missed webhook has been detected and active recovery is in progress — continue polling.",
+          "Retrieves the current status of a checkout session. Poll this endpoint on your success page (every 3 s, max 10 attempts) to confirm payment processing after Stripe redirects the user back. Possible statuses: complete (payment confirmed, tickets issued, email sent), pending (webhook not yet arrived — keep polling), pending_recovery (missed webhook detected, backend is auto-recovering — keep polling), failed (payment could not be verified), refunded (ticket hold expired while payment was processing — full refund has been auto-issued and a refund notification email was sent to the customer).",
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: [
@@ -795,13 +799,57 @@ releaseLock()`,
               ],
             },
           },
+          {
+            status: 200,
+            description: "Ticket hold expired mid-payment — refund auto-issued",
+            body: {
+              session_id: "cs_live_abc123xyz",
+              status: "refunded",
+              tt_error: null,
+              client: {
+                id: "a566bf66-5651-45b1-9148-d6328491ef2b",
+                name: "Shootah",
+              },
+              payments: [
+                {
+                  id: 304,
+                  event_id: "ev_8187172",
+                  ticket_type_name: "VIP",
+                  quantity: 1,
+                  total_amount_cents: 10000,
+                  status: "refunded",
+                },
+              ],
+            },
+          },
+          {
+            status: 200,
+            description: "Payment could not be verified — show error to user",
+            body: {
+              session_id: "cs_live_abc123xyz",
+              status: "failed",
+              client: {
+                id: "a566bf66-5651-45b1-9148-d6328491ef2b",
+                name: "Shootah",
+              },
+              payments: [
+                {
+                  id: 305,
+                  event_id: "ev_8187172",
+                  ticket_type_name: "VIP",
+                  quantity: 1,
+                  total_amount_cents: 10000,
+                  status: "failed",
+                },
+              ],
+            },
+          },
         ],
         codeExamples: [
           {
             title: "Success page polling",
-            note: "Stripe redirects the user to your success page BEFORE the payment webhook arrives at the backend (usually 1–5 s later). Tickets are only issued after the backend processes that webhook — so at the moment the user lands on the success page, their tickets are not yet issued. Poll every 3 s up to 10 times (30 s total): status 'complete' means the webhook was received, TicketTailor tickets are issued, and the confirmation email was sent — show the booking confirmed screen. status 'failed' means payment failed — show an error. If after 10 attempts the status is still pending, check lastKnownStatus: 'pending_recovery' means the backend's active-recovery processor already detected the missed webhook and is fixing it (show 'check your email shortly'); plain 'pending' means something went wrong — show an error. Never show a success screen without first confirming status is 'complete'.",
-            code: `// Poll every 3s, max 10 attempts — covers Stripe webhook delay
-let attempts = 0
+            note: "Stripe redirects the user to your success page BEFORE the payment webhook arrives at the backend (usually 1–5 s later). Tickets are only issued after the backend processes that webhook — so at the moment the user lands on the success page, their tickets are not yet issued. Poll every 3 s up to 10 times (30 s total). Handle all 5 terminal statuses: complete (show success), refunded (hold expired mid-payment — full refund issued, show refund notice), failed (payment failed — show error). If after 10 attempts status is still pending/expired, check lastKnownStatus: pending_recovery means auto-recovery is running (show 'check your email shortly'); otherwise show hard failure. Never show a success screen without first confirming status === 'complete'.",
+            code: `let attempts = 0
 const MAX = 10
 let cancelled = false
 let lastStatus = 'pending'
@@ -813,15 +861,23 @@ async function pollSession(sessionId) {
     lastStatus = data.status
 
     if (data.status === 'complete') {
-      showSuccess(data)     // tickets confirmed, email sent
+      showSuccess(data)          // tickets confirmed, email sent
+    } else if (data.status === 'refunded') {
+      showRefunded(data)         // hold expired mid-payment — refund auto-issued
     } else if (data.status === 'failed') {
-      showFailed()
+      showFailed()               // payment could not be verified
+    } else if (data.status === 'expired') {
+      // Hold released by frontend timer — backend is processing refund
+      // Keep polling until status flips to 'refunded'
+      if (attempts < MAX) { attempts++; setTimeout(() => pollSession(sessionId), 3000) }
+      else showPendingTimeout()
     } else if (attempts < MAX) {
       attempts++
       setTimeout(() => pollSession(sessionId), 3000)
     } else {
-      // 10 attempts exhausted — distinguish "recovering" from hard failure
-      lastStatus === 'pending_recovery' ? showPendingTimeout() : showFailed()
+      // 10 attempts exhausted
+      const recovering = ['pending_recovery', 'processing'].includes(lastStatus)
+      recovering ? showPendingTimeout() : showFailed()
     }
   } catch {
     if (attempts < MAX) { attempts++; setTimeout(() => pollSession(sessionId), 3000) }
@@ -830,22 +886,35 @@ async function pollSession(sessionId) {
 }
 
 const sessionId = new URLSearchParams(location.search).get('session_id')
-pollSession(sessionId)`,
+pollSession(sessionId)
+return () => { cancelled = true }`,
           },
           {
             title: "Status reference",
-            code: `// Three possible statuses after Stripe redirects back:
+            code: `// All possible statuses returned by GET /site/checkout/session/:id
 
-// ✅ complete — webhook received, tickets issued, email sent
-if (data.status === 'complete') { /* show confirmation */ }
+// ✅ complete — webhook received, tickets issued, confirmation email sent
+if (data.status === 'complete') { showBookingConfirmed(data) }
 
-// ⏳ pending — webhook not yet received (normal for ~1-3s)
-// → keep polling (up to 10 × 3s = 30s)
-if (data.status === 'pending') { /* show spinner */ }
+// 💸 refunded — hold expired while payment was processing
+//    Stripe has auto-refunded the charge. A refund email was sent to the customer.
+//    Show a clear message: "Your reservation expired. A full refund has been issued."
+if (data.status === 'refunded') { showRefundedScreen() }
 
-// 🔄 pending_recovery — webhook missed, backend actively recovering via Stripe API
-// → keep polling; show "still confirming" if 10 attempts exhausted
-if (data.status === 'pending_recovery') { /* "check email shortly" */ }`,
+// ❌ failed — payment could not be verified after all retries
+if (data.status === 'failed') { showPaymentFailed() }
+
+// ⏳ pending — webhook not yet received (normal for 1–5 s after Stripe redirect)
+//    Keep polling
+if (data.status === 'pending') { showSpinner() }
+
+// 🔄 pending_recovery — missed webhook detected, backend auto-recovering via Stripe API
+//    Keep polling; if 10 attempts exhausted show "check your email in a few minutes"
+if (data.status === 'pending_recovery') { showRecoveringBanner() }
+
+// ⌛ expired — frontend hold timer hit zero, backend processing the refund
+//    Keep polling until status becomes 'refunded'
+if (data.status === 'expired') { showProcessingRefund() }`,
           },
         ],
         errorCodes: [
@@ -921,6 +990,313 @@ backButton.addEventListener('click', () => {
   releaseHold(sessionId)
   navigate(-1)
 })`,
+          },
+        ],
+        errorCodes: null,
+      },
+    ],
+  },
+  {
+    id: "refunds",
+    title: "Refunds",
+    icon: "RefreshCcw",
+    endpoints: [
+      {
+        id: "refund-lifecycle",
+        method: "GUIDE",
+        path: null,
+        title: "Refund Lifecycle",
+        description:
+          "Talenta auto-refunds customers in three scenarios — no manual action needed. In every case: the Stripe charge is reversed via the API, all Payment rows are set to status='refunded', and a refund notification email is sent to the customer showing the amount, the original payment date/card, and (if customer_timezone was passed at checkout) all dates in the customer's local timezone. Refunds typically appear on the customer's statement in 3–10 business days.",
+        auth: { required: false, note: null },
+        queryParams: null,
+        pathParams: null,
+        requestBody: null,
+        responses: [
+          {
+            status: 200,
+            description: "Trigger 1 — Session expired (frontend hold timer hit zero)",
+            body: {
+              trigger: "Frontend countdown reached 0 → POST release-hold → webhook checkout.session.expired",
+              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
+              session_status_before: "expired",
+              session_status_after: "refunded",
+              email_sent: true,
+              note: "The frontend fires POST /release-hold when its 10-min countdown hits zero. Stripe sends a checkout.session.expired webhook. The backend detects a completed payment on that session, issues the refund, marks payments as refunded, and sends the email.",
+            },
+          },
+          {
+            status: 200,
+            description: "Trigger 2 — TT hold expired server-side (orphaned pending payment)",
+            body: {
+              trigger: "TT hold expired before Stripe was completed — backend orphan cleanup",
+              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
+              session_status_before: "pending",
+              session_status_after: "refunded",
+              email_sent: true,
+              note: "If the user abandons Stripe without paying, the TT hold expires after 10 min. The backend orphan-cleanup job detects the Stripe session is expired but payment was taken (edge case), refunds via Stripe, and sends the email.",
+            },
+          },
+          {
+            status: 200,
+            description: "Trigger 3 — Sold-out race condition (payment completed but tickets gone)",
+            body: {
+              trigger: "Stripe payment_intent.succeeded webhook — but TT tickets already sold by another buyer",
+              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
+              session_status_before: "complete (Stripe) / pending (DB)",
+              session_status_after: "refunded",
+              email_sent: true,
+              note: "Two buyers complete payment at nearly the same time. The second buyer's webhook arrives and finds no inventory left. The backend immediately refunds the charge and sends the refund email. This is the only refund path that cannot be prevented — it is a deliberate safety net.",
+            },
+          },
+        ],
+        codeExamples: [
+          {
+            title: "How the refund email is built",
+            note: "The refund email always shows: amount refunded, original payment date (from Stripe charge timestamp — not DB created_at), card brand and last 4 digits (from Stripe PaymentIntent.payment_method), and all dates formatted in the customer's local timezone (from customer_timezone stored at checkout). If Stripe data is unavailable (e.g. network error), the email falls back to the DB payment record timestamp and omits card details. The 'Paid On' date uses the Stripe latest_charge.created Unix timestamp — this is the most accurate payment time.",
+            code: `// What the backend does to build refund email dates:
+
+// 1. Retrieve full PaymentIntent from Stripe
+const pi = await stripe.PaymentIntent.retrieve(payment_intent_id, {
+  expand: ['payment_method', 'latest_charge']
+})
+
+// 2. Card details
+const card_brand = pi.payment_method?.card?.brand   // e.g. "visa"
+const card_last4 = pi.payment_method?.card?.last4   // e.g. "4242"
+
+// 3. Actual payment time (more accurate than DB created_at)
+const paid_at = pi.latest_charge?.created           // Unix timestamp
+
+// 4. Format in customer's timezone (stored when checkout was created)
+// customer_timezone = "Asia/Kolkata" (from Intl.DateTimeFormat at checkout)
+// All dates shown in the email are in the customer's local time — not UTC
+
+// Email shows:
+// Refunded:    $100.00
+// Paid On:     May 3, 2026, 3:49 AM        ← Stripe charge time in IST
+// Refunded To: •••• 4242  (Visa)`,
+          },
+          {
+            title: "Detecting refund on success page",
+            note: "If the customer's hold timer expired while they were on the Stripe payment page, Stripe still collects payment — but the backend detects the hold has expired and immediately refunds. The session status on GET /session/:id will be 'refunded'. Show a clear explanation: the reservation expired, a full refund has been issued, check your email. Do NOT show a generic error — the customer's money IS being returned.",
+            code: `// On your /checkout/success page:
+const { data } = await axios.get(\`/site/checkout/session/\${sessionId}\`)
+
+switch (data.status) {
+  case 'complete':
+    // ✅ All good — tickets issued, email sent
+    showBookingConfirmed()
+    break
+
+  case 'refunded':
+    // 💸 Hold expired mid-payment — full refund in progress
+    showRefundNotice({
+      title: 'Payment Refunded',
+      message:
+        'Your ticket reservation expired while you were completing payment. ' +
+        'A full refund has been issued and will appear on your card in 3–10 business days. ' +
+        'Check your email for a refund confirmation.',
+      cta: 'Back to Events'
+    })
+    break
+
+  case 'failed':
+    showPaymentFailed()
+    break
+
+  default:
+    // pending / pending_recovery — keep polling (see Get Session Status)
+    scheduleNextPoll()
+}`,
+          },
+        ],
+        errorCodes: null,
+      },
+    ],
+  },
+  {
+    id: "back-button",
+    title: "Back Button & Resume",
+    icon: "RotateCcw",
+    endpoints: [
+      {
+        id: "back-button-resume",
+        method: "GUIDE",
+        path: null,
+        title: "Back Button & Resume Payment",
+        description:
+          "When a user presses the browser Back button from Stripe's hosted checkout page, the browser restores your page from the bfcache (Back/Forward Cache) — a frozen snapshot of the page as it was before the redirect. Without handling this, the user sees a stale form and pressing 'Pay' creates a duplicate hold in TicketTailor and a new Stripe session, leaving the original hold dangling until it auto-expires in 10 minutes. The correct behaviour: detect the bfcache restore, check sessionStorage for an existing valid hold, and show a 'Resume Payment' banner so the user returns to their existing Stripe session — no new hold, no duplicate charge.",
+        auth: { required: false, note: null },
+        queryParams: null,
+        pathParams: null,
+        requestBody: null,
+        responses: [
+          {
+            status: 200,
+            description: "Resume session — existing hold still valid",
+            body: {
+              scenario: "User pressed Back from Stripe. Hold not yet expired.",
+              sessionStorage_key: "tt_hold",
+              sessionStorage_value: {
+                sessionId: "cs_live_abc123xyz",
+                expiresAt: "2026-05-03T04:05:00.000Z",
+                stripeUrl: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
+                eventId: "ev_8187172",
+              },
+              ui_action: "Show 'Resume Payment' banner with live countdown. Do NOT create a new hold.",
+            },
+          },
+          {
+            status: 200,
+            description: "Start over — hold expired or no sessionStorage entry",
+            body: {
+              scenario: "User pressed Back but hold has expired (countdown <= 0) or sessionStorage is empty.",
+              ui_action: "Clear sessionStorage, show normal ticket selection form. Creating a new hold is safe.",
+            },
+          },
+        ],
+        codeExamples: [
+          {
+            title: "Detect Back button (bfcache)",
+            note: "The pageshow event fires on every page load AND on bfcache restores. When e.persisted is true the page was restored from the bfcache — this is the Back button scenario. Use this to re-check sessionStorage for an existing valid hold. Also check on initial mount (not just pageshow) in case the user refreshes rather than going Back.",
+            code: `// ── 1. On page mount — check for existing valid hold ────────────────────────
+function checkExistingHold(eventId) {
+  try {
+    const raw = sessionStorage.getItem('tt_hold')
+    if (!raw) return null
+    const hold = JSON.parse(raw)
+    // Only valid if it belongs to THIS event and hasn't expired
+    if (hold.eventId !== eventId) return null
+    const secsLeft = Math.floor((new Date(hold.expiresAt) - Date.now()) / 1000)
+    if (secsLeft <= 0) {
+      sessionStorage.removeItem('tt_hold')
+      return null
+    }
+    return { ...hold, secsLeft }
+  } catch {
+    return null
+  }
+}
+
+// ── 2. pageshow fires on Back button (e.persisted = bfcache restore) ─────────
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) {
+    // Page restored from bfcache after user pressed Back from Stripe
+    const hold = checkExistingHold(eventId)
+    if (hold) {
+      setResumeSession(hold)   // show Resume Payment banner
+    }
+  }
+})
+
+// ── 3. On initial mount ───────────────────────────────────────────────────────
+useEffect(() => {
+  const hold = checkExistingHold(eventId)
+  if (hold) setResumeSession(hold)
+}, [eventId])`,
+          },
+          {
+            title: "Resume Payment banner",
+            note: "Show a banner with a live countdown so the user knows their hold is still active. Provide two actions: 'Resume Payment' (send them back to the same Stripe URL — no new hold, no new session) and 'Start over' (release the old hold and let them select tickets fresh). The countdown ticks every second. When it reaches zero, auto-clear the banner and show the normal form — the hold has expired and the user can create a new one.",
+            code: `// ── Resume Payment banner with live countdown ────────────────────────────────
+function ResumePaymentBanner({ resumeSession, onStartOver }) {
+  const [secsLeft, setSecsLeft] = useState(resumeSession.secsLeft)
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const s = Math.max(0, Math.floor((new Date(resumeSession.expiresAt) - Date.now()) / 1000))
+      setSecsLeft(s)
+      if (s === 0) {
+        clearInterval(timer)
+        sessionStorage.removeItem('tt_hold')
+        onStartOver()   // hold expired — show normal form
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [resumeSession])
+
+  const mins = String(Math.floor(secsLeft / 60)).padStart(2, '0')
+  const secs = String(secsLeft % 60).padStart(2, '0')
+
+  return (
+    <div className="resume-banner">
+      <p>Your tickets are still reserved — {mins}:{secs} remaining</p>
+
+      {/* Resume: send user back to SAME Stripe session — no new hold created */}
+      <a href={resumeSession.stripeUrl} className="btn-primary">
+        Resume Payment →
+      </a>
+
+      {/* Start over: release the old hold, then let user re-select tickets */}
+      <button onClick={async () => {
+        // Release hold fire-and-forget — frees inventory immediately
+        fetch(\`/site/checkout/session/\${resumeSession.sessionId}/release-hold\`, {
+          method: 'POST'
+        }).catch(() => {})
+        sessionStorage.removeItem('tt_hold')
+        onStartOver()
+      }}>
+        Start over
+      </button>
+    </div>
+  )
+}`,
+          },
+          {
+            title: "Cancel from Stripe checkout page",
+            note: "When the user clicks Cancel on Stripe's hosted page, Stripe redirects them to your cancel_url. On that page immediately release the hold (fire-and-forget) so inventory is freed for other buyers without waiting for the 10-min timeout. Then clear sessionStorage and redirect the user back to the event page.",
+            code: `// ── /checkout/cancel page ────────────────────────────────────────────────────
+useEffect(() => {
+  const raw = sessionStorage.getItem('tt_hold')
+  if (!raw) return
+
+  const { sessionId, eventId } = JSON.parse(raw)
+
+  // Release hold immediately — fire-and-forget, never block navigation
+  fetch(\`/site/checkout/session/\${sessionId}/release-hold\`, { method: 'POST' })
+    .catch(() => {})
+
+  // Clear so a refresh doesn't double-release
+  sessionStorage.removeItem('tt_hold')
+
+  // Redirect back to event so user can try again
+  navigate(\`/events/\${eventId}\`)
+}, [])`,
+          },
+          {
+            title: "Full state machine",
+            note: "Summary of all states the checkout flow can be in and what to show the user at each stage.",
+            code: `// ── Checkout page state machine ──────────────────────────────────────────────
+
+// STATE 1: No active hold — show normal ticket selection
+//   sessionStorage('tt_hold') = null OR expired
+//   → User selects tickets, enters details, clicks Pay
+//   → POST /site/checkout/session → creates TT hold + Stripe session
+//   → Store { sessionId, expiresAt, stripeUrl, eventId } in sessionStorage
+//   → Redirect to stripeUrl
+
+// STATE 2: Active hold, user is on Stripe checkout page
+//   sessionStorage('tt_hold') = { sessionId, expiresAt, stripeUrl, eventId }
+//   → Countdown running (10 min from hold creation)
+//   → If user completes payment → Stripe redirects to /checkout/success?session_id=...
+//   → If user clicks Cancel → redirected to /checkout/cancel → release hold + clear storage
+//   → If countdown hits 0 → POST release-hold → backend refunds if payment was taken
+
+// STATE 3: User pressed Back from Stripe (bfcache restore)
+//   pageshow event fires with e.persisted = true
+//   sessionStorage still has hold data (it persists across navigation)
+//   secsLeft > 0 → Show "Resume Payment" banner
+//   → Resume: window.location.href = resumeSession.stripeUrl (same Stripe session)
+//   → Start over: POST release-hold → clear storage → show form
+
+// STATE 4: User on /checkout/success
+//   Poll GET /site/checkout/session/:id every 3s (max 10 attempts)
+//   complete   → show booking confirmed
+//   refunded   → show refund notice (hold expired mid-payment)
+//   failed     → show payment failed
+//   pending    → keep polling
+//   pending_recovery → keep polling, show "still confirming" at timeout`,
           },
         ],
         errorCodes: null,
