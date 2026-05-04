@@ -1124,9 +1124,9 @@ switch (data.status) {
         id: "back-button-resume",
         method: "GUIDE",
         path: null,
-        title: "Back Button & Resume Payment",
+        title: "Back Button & Session Resume",
         description:
-          "When a user presses the browser Back button from Stripe's hosted checkout page, the browser restores your page from the bfcache (Back/Forward Cache) — a frozen snapshot of the page as it was before the redirect. Without handling this, the user sees a stale form and pressing 'Pay' creates a duplicate hold in TicketTailor and a new Stripe session, leaving the original hold dangling until it auto-expires in 10 minutes. The correct behaviour: detect the bfcache restore, check sessionStorage for an existing valid hold, and show a 'Resume Payment' banner so the user returns to their existing Stripe session — no new hold, no duplicate charge.",
+          "When a user presses the browser Back button from Stripe's hosted checkout page, the browser may restore your page from the bfcache (Back/Forward Cache). The correct behaviour: detect the restore, pre-fill the form with the details already stored in sessionStorage (name, email, phone), and skip the Terms & Conditions modal when Pay is clicked again — the user goes straight back to their existing Stripe session. No new hold, no duplicate charge, no countdown banner. If the hold has expired by the time they click Pay, show a 'Session Expired' screen and redirect home. The Stripe cancel_url follows the same pattern: valid hold → redirect to pre-filled checkout form; expired → Session Expired screen.",
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: null,
@@ -1134,169 +1134,218 @@ switch (data.status) {
         responses: [
           {
             status: 200,
-            description: "Resume session — existing hold still valid",
+            description: "Valid hold — form pre-fills, Pay skips T&C",
             body: {
-              scenario: "User pressed Back from Stripe. Hold not yet expired.",
+              scenario: "User pressed Back from Stripe (or Stripe Cancel). Hold not yet expired.",
               sessionStorage_key: "tt_hold",
               sessionStorage_value: {
                 sessionId: "cs_live_abc123xyz",
                 expiresAt: "2026-05-03T04:05:00.000Z",
                 stripeUrl: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
                 eventId: "ev_8187172",
+                ticketsParam: "{\"tt_type_123\":2}",
+                name: "Jane Doe",
+                email: "jane@example.com",
+                phone: "+44 7700 900000",
               },
-              ui_action: "Show 'Resume Payment' banner with live countdown. Do NOT create a new hold.",
+              ui_action: "Form pre-fills with stored name/email/phone. Clicking Pay skips T&C and redirects straight to existing Stripe session — no new hold created.",
             },
           },
           {
             status: 200,
-            description: "Start over — hold expired or no sessionStorage entry",
+            description: "Expired or missing — Session Expired screen",
             body: {
-              scenario: "User pressed Back but hold has expired (countdown <= 0) or sessionStorage is empty.",
-              ui_action: "Clear sessionStorage, show normal ticket selection form. Creating a new hold is safe.",
+              scenario: "User returned but hold has expired or sessionStorage is empty.",
+              ui_action: "Show 'Session Expired' card → 3-second auto-redirect to home ('/').",
             },
           },
         ],
         codeExamples: [
           {
-            title: "Detect Back button (bfcache)",
-            note: "The pageshow event fires on every page load AND on bfcache restores. When e.persisted is true the page was restored from the bfcache — this is the Back button scenario. Use this to re-check sessionStorage for an existing valid hold. Also check on initial mount (not just pageshow) in case the user refreshes rather than going Back.",
-            code: `// ── 1. On page mount — check for existing valid hold ────────────────────────
-function checkExistingHold(eventId) {
+            title: "sessionStorage schema & pre-fill on return",
+            note: "Store all customer details in sessionStorage when the checkout session is created. On return (bfcache restore or fresh page load), read them back to pre-fill the form. The pageshow event handles bfcache restores; the event-load effect handles fresh loads. Both reset processing state so the Pay button is usable again.",
+            code: `// ── sessionStorage schema (written when POST /site/checkout/session succeeds) ──
+// {
+//   sessionId:    "cs_live_abc123xyz",           // internal session ID
+//   expiresAt:    "2026-05-03T04:05:00.000Z",    // ISO — TT hold expires in 10 min
+//   stripeUrl:    "https://checkout.stripe.com/c/pay/cs_...",
+//   eventId:      "ev_8187172",
+//   ticketsParam: '{"tt_type_123":2}',           // JSON — reconstructs checkout URL
+//   name:         "Jane Doe",                    // pre-fill on return
+//   email:        "jane@example.com",
+//   phone:        "+44 7700 900000",
+// }
+
+// ── On event load — pre-fill form if returning from Stripe ────────────────────
+// (run inside the event fetch .then() callback, after setTickets())
+try {
+  const raw = sessionStorage.getItem('tt_hold')
+  if (raw) {
+    const hold = JSON.parse(raw)
+    const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
+    if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
+      if (hold.name)  setName(hold.name)
+      if (hold.email) setEmail(hold.email)
+      if (hold.phone) setPhone(hold.phone)
+    }
+  }
+} catch {}
+
+// ── On bfcache restore (browser Back) — reset processing + pre-fill ───────────
+window.addEventListener('pageshow', (e) => {
+  if (!e.persisted) return
+  // Reset — processing was true before the Stripe redirect
+  setProcessing(false)
+  submittingRef.current = false
+  // Re-fill form fields from session (in case React state was stale)
   try {
     const raw = sessionStorage.getItem('tt_hold')
-    if (!raw) return null
-    const hold = JSON.parse(raw)
-    // Only valid if it belongs to THIS event and hasn't expired
-    if (hold.eventId !== eventId) return null
-    const secsLeft = Math.floor((new Date(hold.expiresAt) - Date.now()) / 1000)
-    if (secsLeft <= 0) {
-      sessionStorage.removeItem('tt_hold')
-      return null
+    if (raw) {
+      const hold = JSON.parse(raw)
+      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
+      if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
+        if (hold.name)  setName(hold.name)
+        if (hold.email) setEmail(hold.email)
+        if (hold.phone) setPhone(hold.phone)
+      }
     }
-    return { ...hold, secsLeft }
-  } catch {
-    return null
-  }
-}
-
-// ── 2. pageshow fires on Back button (e.persisted = bfcache restore) ─────────
-window.addEventListener('pageshow', (e) => {
-  if (e.persisted) {
-    // Page restored from bfcache after user pressed Back from Stripe
-    const hold = checkExistingHold(eventId)
-    if (hold) {
-      setResumeSession(hold)   // show Resume Payment banner
-    }
-  }
-})
-
-// ── 3. On initial mount ───────────────────────────────────────────────────────
-useEffect(() => {
-  const hold = checkExistingHold(eventId)
-  if (hold) setResumeSession(hold)
-}, [eventId])`,
+  } catch {}
+})`,
           },
           {
-            title: "Resume Payment banner",
-            note: "Show a banner with a live countdown so the user knows their hold is still active. Provide two actions: 'Resume Payment' (send them back to the same Stripe URL — no new hold, no new session) and 'Start over' (release the old hold and let them select tickets fresh). The countdown ticks every second. When it reaches zero, auto-clear the banner and show the normal form — the hold has expired and the user can create a new one.",
-            code: `// ── Resume Payment banner with live countdown ────────────────────────────────
-function ResumePaymentBanner({ resumeSession, onStartOver }) {
-  const [secsLeft, setSecsLeft] = useState(resumeSession.secsLeft)
+            title: "Pay button — skip T&C for existing sessions",
+            note: "Check sessionStorage at the very top of the Pay button handler — before form validation and before showing the Terms & Conditions modal. If a valid Stripe URL exists in the current tab's sessionStorage the user already accepted T&C when they created the session, so send them straight back to Stripe. If expired, show the Session Expired screen. Only show T&C for brand-new sessions.",
+            code: `// Pay button handler — sessionStorage check runs FIRST, before any validation
+function handlePayClick(e) {
+  e.preventDefault()
+  if (submittingRef.current || processing) return
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const s = Math.max(0, Math.floor((new Date(resumeSession.expiresAt) - Date.now()) / 1000))
-      setSecsLeft(s)
-      if (s === 0) {
-        clearInterval(timer)
-        sessionStorage.removeItem('tt_hold')
-        onStartOver()   // hold expired — show normal form
+  // ── 1. Existing session check (highest priority) ──────────────────────────
+  try {
+    const raw = sessionStorage.getItem('tt_hold')
+    if (raw) {
+      const hold = JSON.parse(raw)
+      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
+      if (hold.stripeUrl && expiresAt) {
+        if (expiresAt > new Date()) {
+          // Valid — redirect immediately, skip T&C and form validation entirely
+          window.location.href = hold.stripeUrl
+          return
+        } else {
+          // Expired — clear storage, show Session Expired screen → 3s → home
+          sessionStorage.removeItem('tt_hold')
+          setSessionExpired(true)
+          return
+        }
       }
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [resumeSession])
+    }
+  } catch {}
 
-  const mins = String(Math.floor(secsLeft / 60)).padStart(2, '0')
-  const secs = String(secsLeft % 60).padStart(2, '0')
-
-  return (
-    <div className="resume-banner">
-      <p>Your tickets are still reserved — {mins}:{secs} remaining</p>
-
-      {/* Resume: send user back to SAME Stripe session — no new hold created */}
-      <a href={resumeSession.stripeUrl} className="btn-primary">
-        Resume Payment →
-      </a>
-
-      {/* Start over: release the old hold, then let user re-select tickets */}
-      <button onClick={async () => {
-        // Release hold fire-and-forget — frees inventory immediately
-        fetch(\`/site/checkout/session/\${resumeSession.sessionId}/release-hold\`, {
-          method: 'POST'
-        }).catch(() => {})
-        sessionStorage.removeItem('tt_hold')
-        onStartOver()
-      }}>
-        Start over
-      </button>
-    </div>
-  )
+  // ── 2. No existing session — validate form then show T&C ──────────────────
+  if (!name.trim() || name.trim().split(/\\s+/).length < 2) {
+    setNameError('Enter your full name — e.g. John Doe')
+    return
+  }
+  if (!email) { setCheckoutError('Email required'); return }
+  setShowTerms(true)   // T&C only shown for new sessions
 }`,
           },
           {
-            title: "Cancel from Stripe checkout page",
-            note: "When the user clicks Cancel on Stripe's hosted page, Stripe redirects them to your cancel_url. On that page immediately release the hold (fire-and-forget) so inventory is freed for other buyers without waiting for the 10-min timeout. Then clear sessionStorage and redirect the user back to the event page.",
+            title: "Cancel page — same behaviour as Back button",
+            note: "Configure cancel_url as /checkout/cancel?event_id={event_id}. When Stripe redirects here, check sessionStorage: if the hold is still valid redirect silently to the pre-filled checkout form (identical to the Back button experience); if expired or missing show a Session Expired card with a 3-second auto-redirect to home. Do NOT release the hold here — the user may have pressed cancel by accident and clicking Pay again on the pre-filled form goes straight back to Stripe.",
             code: `// ── /checkout/cancel page ────────────────────────────────────────────────────
+// cancel_url: /checkout/cancel?event_id={event_id}
+// Behaves identically to the browser Back button.
+
 useEffect(() => {
-  const raw = sessionStorage.getItem('tt_hold')
-  if (!raw) return
+  try {
+    const raw = sessionStorage.getItem('tt_hold')
+    if (raw) {
+      const hold = JSON.parse(raw)
+      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
+      if (expiresAt && expiresAt > new Date() && hold.eventId && hold.ticketsParam) {
+        // Valid hold — redirect to pre-filled checkout form (no release, user may resume)
+        navigate(
+          \`/checkout?eventId=\${hold.eventId}&tickets=\${encodeURIComponent(hold.ticketsParam)}\`,
+          { replace: true }
+        )
+        return
+      }
+    }
+  } catch {}
 
-  const { sessionId, eventId } = JSON.parse(raw)
-
-  // Release hold immediately — fire-and-forget, never block navigation
-  fetch(\`/site/checkout/session/\${sessionId}/release-hold\`, { method: 'POST' })
-    .catch(() => {})
-
-  // Clear so a refresh doesn't double-release
-  sessionStorage.removeItem('tt_hold')
-
-  // Redirect back to event so user can try again
-  navigate(\`/events/\${eventId}\`)
+  // No valid hold — show Session Expired → 3s redirect to home
+  setExpired(true)
 }, [])`,
           },
           {
+            title: "UI Back button — always navigate to event page",
+            note: "The back button inside the checkout form must navigate to /events/{eventId} directly — never use navigate(-1). After the user returns from Stripe via browser Back, history[-1] is the Stripe hosted page. Using navigate(-1) would send them back into Stripe. Always navigate to the event page explicitly. Also clear sessionStorage and release the hold (fire-and-forget) so inventory is freed immediately.",
+            code: `// ← Back button inside /checkout page
+<button onClick={() => {
+  // Clear session and release hold before navigating away
+  try {
+    const raw = sessionStorage.getItem('tt_hold')
+    if (raw) {
+      const hold = JSON.parse(raw)
+      sessionStorage.removeItem('tt_hold')
+      if (hold.sessionId) {
+        // Fire-and-forget — frees inventory immediately
+        fetch(\`/site/checkout/session/\${hold.sessionId}/release-hold\`, {
+          method: 'POST'
+        }).catch(() => {})
+      }
+    }
+  } catch {}
+  // Always navigate to event page — NEVER use navigate(-1) here.
+  // After Stripe Back, history[-1] is the Stripe page; navigate(-1) would go back into it.
+  navigate(\`/events/\${eventId}\`)
+}}>
+  ← Back
+</button>`,
+          },
+          {
             title: "Full state machine",
-            note: "Summary of all states the checkout flow can be in and what to show the user at each stage.",
+            note: "All states the checkout flow can be in and what to show the user at each stage.",
             code: `// ── Checkout page state machine ──────────────────────────────────────────────
 
-// STATE 1: No active hold — show normal ticket selection
-//   sessionStorage('tt_hold') = null OR expired
-//   → User selects tickets, enters details, clicks Pay
+// STATE 1: No active hold — show normal checkout form
+//   sessionStorage('tt_hold') = null
+//   → User fills name/email/phone, clicks Pay
+//   → T&C modal shown → user accepts
 //   → POST /site/checkout/session → creates TT hold + Stripe session
-//   → Store { sessionId, expiresAt, stripeUrl, eventId } in sessionStorage
+//   → Store { sessionId, expiresAt, stripeUrl, eventId, ticketsParam, name, email, phone }
 //   → Redirect to stripeUrl
 
-// STATE 2: Active hold, user is on Stripe checkout page
-//   sessionStorage('tt_hold') = { sessionId, expiresAt, stripeUrl, eventId }
-//   → Countdown running (10 min from hold creation)
-//   → If user completes payment → Stripe redirects to /checkout/success?session_id=...
-//   → If user clicks Cancel → redirected to /checkout/cancel → release hold + clear storage
-//   → If countdown hits 0 → POST release-hold → backend refunds if payment was taken
+// STATE 2: User presses browser Back from Stripe
+//   pageshow fires with e.persisted = true  (bfcache restore)
+//   OR fresh page reload (no bfcache)
+//   → form pre-fills from tt_hold (name, email, phone)
+//   → Click Pay → sessionStorage has valid hold → skip T&C → redirect to Stripe
+//   → No new hold, no duplicate charge
 
-// STATE 3: User pressed Back from Stripe (bfcache restore)
-//   pageshow event fires with e.persisted = true
-//   sessionStorage still has hold data (it persists across navigation)
-//   secsLeft > 0 → Show "Resume Payment" banner
-//   → Resume: window.location.href = resumeSession.stripeUrl (same Stripe session)
-//   → Start over: POST release-hold → clear storage → show form
+// STATE 3: User clicks Cancel on Stripe hosted page
+//   Stripe redirects to /checkout/cancel?event_id={id}
+//   → CheckoutCancelPage reads sessionStorage
+//   → Valid hold → redirect to /checkout?eventId=...&tickets=... (same as Back button)
+//   → Expired/missing → show "Session Expired" → 3s redirect to home
 
-// STATE 4: User on /checkout/success
+// STATE 4: Hold expired (> 10 min since creation)
+//   User clicks Pay on pre-filled form OR arrives at cancel page after expiry
+//   → sessionStorage.removeItem('tt_hold')
+//   → Show "Session Expired" card → 3s auto-redirect to '/'
+
+// STATE 5: User clicks UI Back button on /checkout
+//   → Clear sessionStorage + POST release-hold (fire-and-forget)
+//   → navigate('/events/' + eventId)   — never navigate(-1)
+
+// STATE 6: User on /checkout/success
 //   Poll GET /site/checkout/session/:id every 3s (max 10 attempts)
-//   complete   → show booking confirmed
-//   refunded   → show refund notice (hold expired mid-payment)
-//   failed     → show payment failed
-//   pending    → keep polling
-//   pending_recovery → keep polling, show "still confirming" at timeout`,
+//   complete          → show booking confirmed
+//   refunded          → show refund notice (hold expired mid-payment)
+//   failed            → show payment failed
+//   pending           → keep polling
+//   pending_recovery  → keep polling, show "still confirming" at timeout`,
           },
         ],
         errorCodes: null,
