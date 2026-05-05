@@ -50,12 +50,8 @@ function SidebarContent({ sections, activeId, onNavClick }) {
       // Collapse
       setOpenSections((prev) => ({ ...prev, [section.id]: false }))
     } else {
-      // Expand and navigate to first endpoint
+      // Expand only — user chooses which endpoint to navigate to
       setOpenSections((prev) => ({ ...prev, [section.id]: true }))
-      const firstEndpoint = section.endpoints[0]
-      if (firstEndpoint) {
-        onNavClick(firstEndpoint.id)
-      }
     }
   }
 

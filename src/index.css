@@ -285,7 +285,6 @@
 }
 
 .sidebar-nav-item.active {
-  border-left-color: var(--sidebar-primary);
   background-color: var(--sidebar-accent);
   color: var(--sidebar-accent-foreground);
   font-weight: 600;
