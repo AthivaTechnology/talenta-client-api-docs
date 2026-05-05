@@ -205,7 +205,7 @@
 
 @media (min-width: 1024px) {
   .docs-content {
-    @apply pl-16 pr-74;
+    @apply pl-16 pr-16;
   }
 }
 

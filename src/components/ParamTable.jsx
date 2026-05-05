@@ -2,10 +2,12 @@ export function ParamTable({ params, title }) {
   if (!params || params.length === 0) return null
 
   return (
-    <div className="my-6">
-      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h4>
+    <div className="mb-4">
+      {title && (
+        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </h4>
+      )}
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="param-table">
           <thead>

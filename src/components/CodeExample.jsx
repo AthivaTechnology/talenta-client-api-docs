@@ -3,6 +3,22 @@ import { Copy, Check, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { BASE_URL } from "@/data/api-docs"
 
+function InlineText({ text }) {
+  // Split on both **bold** and `code` patterns
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**"))
+          return <strong key={i} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>
+        if (part.startsWith("`") && part.endsWith("`"))
+          return <code key={i} className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">{part.slice(1, -1)}</code>
+        return part
+      })}
+    </>
+  )
+}
+
 function colorizeJs(code) {
   const escaped = code
     .replace(/&/g, "&amp;")
@@ -67,17 +83,37 @@ export function CodeExample({ examples, showOriginNote = false, originNote = nul
         </button>
       </div>
 
+      {/* Important bullets — shown above code when present */}
+      {current.noteBullets && (
+        <div className="border-b border-border bg-primary/5 px-4 py-3">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Info size={13} className="shrink-0 text-primary" />
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">Important</span>
+          </div>
+          <ul className="space-y-2">
+            {current.noteBullets.map((b, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-primary/50" />
+                <span className="text-xs leading-relaxed text-muted-foreground"><InlineText text={b} /></span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Code */}
       <pre
         className="code-example-pre"
         dangerouslySetInnerHTML={{ __html: colorizeJs(current.code) }}
       />
 
-      {/* Per-example note */}
+      {/* Per-example note — shown below code */}
       {current.note && (
-        <div className="flex gap-2 rounded-b-lg border-t border-border bg-muted/40 px-4 py-3">
-          <Info size={14} className="mt-0.5 shrink-0 text-primary" />
-          <p className="text-xs leading-relaxed text-muted-foreground">{current.note}</p>
+        <div className="rounded-b-lg border-t border-border bg-muted/40 px-4 py-3">
+          <div className="flex gap-2">
+            <Info size={14} className="mt-0.5 shrink-0 text-primary" />
+            <p className="text-xs leading-relaxed text-muted-foreground">{current.note}</p>
+          </div>
         </div>
       )}
 

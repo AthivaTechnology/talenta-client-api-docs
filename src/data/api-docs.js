@@ -1,57 +1,25 @@
 export const BASE_URL = "https://talenta.athivaone.com/api/v1"
 
 export const API_SECTIONS = [
+  // ─────────────────────────────────────────────────────────────
+  // HEALTH
+  // ─────────────────────────────────────────────────────────────
   {
     id: "health",
     title: "Health",
     icon: "Activity",
     endpoints: [
       {
-        id: "get-root",
-        method: "GET",
-        path: "/",
-        title: "Service Status",
-        description:
-          "Returns a simple liveness check confirming the API server is running. Use this as a lightweight ping before making more expensive calls.",
-        auth: { required: false, note: null },
-        queryParams: null,
-        pathParams: null,
-        requestBody: null,
-        responses: [
-          {
-            status: 200,
-            description: "Service is running",
-            body: {
-              status: "ok",
-              service: "Talenta API",
-              env: "production",
-            },
-          },
-        ],
-        codeExamples: [
-          {
-            title: "JavaScript",
-            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
-
-const res = await fetch(\`\${BASE}/\`)
-const data = await res.json()
-
-// Response:
-// data.status  → "ok"
-// data.service → "Talenta API"
-// data.env     → "production"
-console.log(data.status) // "ok"`,
-          },
-        ],
-        errorCodes: null,
-      },
-      {
         id: "get-health",
         method: "GET",
         path: "/health",
-        title: "Health Check with DB Status",
+        title: "Health Check",
         description:
-          "Returns detailed health status including database connectivity. Use this endpoint to verify full-stack availability before processing user-facing requests.",
+          "Returns the current status of the API and its database connection.",
+        bullets: [
+          "Always check the status field in the response, not just the HTTP status code. The API returns 200 even when the database is down.",
+          "If status is 'unhealthy', the database field shows why (e.g. \"Connection timeout: could not connect to server\").",
+        ],
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: null,
@@ -67,7 +35,7 @@ console.log(data.status) // "ok"`,
           },
           {
             status: 503,
-            description: "Service degraded — database unreachable",
+            description: "Service degraded. Database unreachable.",
             body: {
               status: "unhealthy",
               database: "Connection timeout: could not connect to server",
@@ -110,6 +78,10 @@ if (health?.status !== 'healthy') {
       },
     ],
   },
+
+  // ─────────────────────────────────────────────────────────────
+  // EVENTS
+  // ─────────────────────────────────────────────────────────────
   {
     id: "events",
     title: "Events",
@@ -121,10 +93,11 @@ if (health?.status !== 'healthy') {
         path: "/site/events",
         title: "List Events",
         description:
-          "Returns a list of published events associated with the requesting client's domain. The client is automatically identified via the Origin or Referer header — no API key required in the request. Events are auto-closed in the background when their end time passes.",
-        originNote: {
-          text: "All /site/* endpoints identify your client automatically using the Origin (or Referer) header. In a browser this header is sent automatically when your page makes a fetch/axios request. When testing with curl or Postman you must add it manually — the backend looks up your registered domain from this header and rejects unknown origins with 403 DOMAIN_NOT_REGISTERED.",
-        },
+          "Returns all published events for your client domain. Use this to display your event listing page.",
+        bullets: [
+"When an event's end time passes, the backend automatically closes it. Closed events are not returned in this list.",
+          "Default limit is 50 events, maximum is 100. Use the limit query parameter to control the page size.",
+        ],
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header matching registered client domains. No API key needed.",
@@ -316,7 +289,14 @@ useEffect(() => {
         path: "/site/events/{event_id}",
         title: "Get Event Detail",
         description:
-          "Returns details for a specific event, including its ticket types and availability.",
+          "Returns full details for a single event, including live ticket availability per ticket type.",
+        tip: "Always call this endpoint before showing a checkout form to get live ticket availability.",
+        bullets: [
+          "Returns the full event details including name, date, venue, and **live ticket availability** for each ticket type.",
+          "**Poll this endpoint to keep ticket counts fresh.** When `held_count > 0` on any ticket type, poll every **30 seconds** — tickets are actively being held by another buyer. When no holds are active (`held_count = 0` on all types), poll every **60 seconds** is enough.",
+          "`quantity_available` already accounts for held tickets. Use it directly for availability checks — do not subtract `held_count` yourself.",
+        ],
+        keyFields: null,
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header.",
@@ -451,39 +431,74 @@ useEffect(() => {
         codeExamples: [
           {
             title: "JavaScript",
-            note: null,
+            noteBullets: [
+              "Use `quantity_available` per ticket type for availability checks — **do not subtract `held_count` yourself.**",
+              "**Poll every 30s** when `held_count > 0` (another buyer is actively holding tickets). **Poll every 60s** when no holds are active.",
+            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
-const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
-const { name, start, venue, ticket_types, total_remaining } = data
+// ── Fetch event detail ────────────────────────────────────────
+const { data: event } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
 
-console.log(\`\${name} — \${total_remaining} tickets left\`)
+const { name, start, venue, ticket_types, total_remaining, total_held } = event
 
+// ── Read availability per ticket type ────────────────────────
 ticket_types.forEach(tt => {
-  console.log(\`\${tt.name}: \${tt.quantity_available} available\`)
-})`,
+  console.log(\`\${tt.name}: \${tt.quantity_available} available (held: \${tt.held_count})\`)
+})
+
+// ── Polling: adjust interval based on active holds ────────────
+function startPolling(eventId, onUpdate) {
+  let timer
+
+  async function poll() {
+    const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
+    onUpdate(data)
+    // 30s if any holds active, 60s otherwise
+    const hasHolds = data.ticket_types.some(tt => tt.held_count > 0)
+    timer = setTimeout(poll, hasHolds ? 30_000 : 60_000)
+  }
+
+  poll()
+  return () => clearTimeout(timer)  // call to stop polling
+}`,
           },
           {
             title: "React (useEffect)",
-            note: null,
+            noteBullets: [
+              "Use `quantity_available` per ticket type for availability checks — **do not subtract `held_count` yourself.**",
+              "**Poll every 30s** when `held_count > 0` (another buyer is actively holding tickets). **Poll every 60s** when no holds are active.",
+            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
 const [event, setEvent] = useState(null)
 
 useEffect(() => {
-  axios.get(\`\${BASE}/site/events/\${eventId}\`)
-    .then(({ data }) => setEvent(data))
-    .catch(() => setError('Event not found'))
+  let timer
+
+  async function fetchAndSchedule() {
+    try {
+      const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
+      setEvent(data)
+
+      // Poll faster when tickets are actively being held
+      const hasHolds = data.ticket_types.some(tt => tt.held_count > 0)
+      timer = setTimeout(fetchAndSchedule, hasHolds ? 30_000 : 60_000)
+    } catch {
+      setError('Failed to load event')
+    }
+  }
+
+  fetchAndSchedule()
+  return () => clearTimeout(timer)
 }, [eventId])
 
-// Response fields:
-// event.name                       → "Desert Challenge 2026"
-// event.start.date / .time         → "2026-04-30" / "17:30"
-// event.venue.name                 → "Featherlite"
-// event.total_remaining            → 79
-// event.ticket_types[].name        → "General Admission"
-// event.ticket_types[].price       → 1000  (cents)
-// event.ticket_types[].quantity_available → 50`,
+// Key fields per ticket type:
+// tt.name               → "General Admission"
+// tt.price              → 1000  (in cents, e.g. $10.00)
+// tt.quantity_available → 50    (use this — held already subtracted)
+// tt.held_count         → 2     (informational only)
+// tt.status             → "on_sale" | "sold_out" | "unavailable"`,
           },
         ],
         errorCodes: [
@@ -491,7 +506,7 @@ useEffect(() => {
             status: 404,
             code: "EVENT_NOT_FOUND",
             description:
-              "No event with this ID exists, or it is in a non-visible status (draft, cancelled, close_sales) for this client domain, or the event has already ended.",
+              "No event with this ID exists, or it is in a non-visible status (draft, close_sales) for this client domain, or the event has already ended.",
           },
           {
             status: 403,
@@ -506,7 +521,15 @@ useEffect(() => {
         path: "/site/bookings",
         title: "Get Bookings by Email",
         description:
-          "Retrieves all bookings associated with an email address for events belonging to the client's domain. Useful for building an attendee self-service portal where users can view their purchased tickets. Results are strictly scoped to the requesting client — attendees from other clients are never returned.",
+          "Retrieves all bookings for a given email address, scoped to the requesting client's domain. Use this to build an attendee self-service portal where users can view their purchased tickets.",
+        bullets: [
+          "The email query parameter is required. The request will fail with 422 if it is missing or malformed.",
+          "Results are strictly scoped to the requesting client. Attendees from other clients are never returned.",
+          "URL-encode the email value when passing it as a query parameter (e.g. user%40example.com).",
+          "A 200 with an empty bookings array means no bookings exist for that email. This is not an error.",
+          "total_amount_cents is in cents. Divide by 100 to display as dollars (10000 = $100.00).",
+        ],
+        keyFields: null,
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header. Email must be provided as a query parameter.",
@@ -602,12 +625,16 @@ useEffect(() => {
           {
             status: 422,
             code: "INVALID_EMAIL",
-            description: "The provided email address is not a valid format. FastAPI validates via Pydantic EmailStr.",
+            description: "The provided email address is not a valid format.",
           },
         ],
       },
     ],
   },
+
+  // ─────────────────────────────────────────────────────────────
+  // CHECKOUT
+  // ─────────────────────────────────────────────────────────────
   {
     id: "checkout",
     title: "Checkout",
@@ -619,13 +646,71 @@ useEffect(() => {
         path: "/site/checkout/session",
         title: "Create Checkout Session",
         description:
-          "Initiates a checkout session by placing a 10-minute hold on the requested tickets to prevent overselling. For paid events, returns a Stripe Checkout URL to redirect the user. For free events, immediately completes the booking, issues tickets, and sends a confirmation email — no redirect needed.\n\n⚠️ Hold vs Stripe session timing: The ticket hold expires after 10 minutes — but the Stripe Checkout URL itself remains active for up to 30 minutes. This means a customer can still complete payment on Stripe after the 10-minute hold has expired. In that case the backend detects the expired hold and checks current ticket availability: if tickets are still available, the booking is completed and tickets are issued normally; if no tickets are available, the charge is immediately refunded via Stripe and a refund notification email is sent — the customer will not receive tickets. Make this window clear in your checkout UI — show a visible 10-minute countdown so customers know they must complete payment within that window.",
+          "Use this to start the ticket purchase flow. For paid events, the response includes a Stripe Checkout URL where you redirect the user to complete payment. For free events, the booking is confirmed immediately.",
+        bullets: null,
+        scenarios: [
+          {
+            type: "free",
+            label: "Free Event",
+            detail: "The response comes back with status='complete' and a success URL. Redirect the user to that URL immediately.",
+          },
+          {
+            type: "paid",
+            label: "Paid Event",
+            detail: "The response includes a Stripe Checkout URL. Before redirecting, save the session data to sessionStorage so the form can be pre-filled if the user returns via the browser Back button or the Stripe Cancel page.",
+          },
+        ],
+        flow: null,
         auth: {
           required: false,
           note: "Client identified automatically via the Origin or Referer request header.",
         },
         queryParams: null,
         pathParams: null,
+        requestBodyParams: [
+          {
+            name: "event_id",
+            type: "string",
+            required: true,
+            default: null,
+            description: "The event ID to purchase tickets for. Get this from the List Events or Get Event Detail response (e.g. ev_8187172).",
+          },
+          {
+            name: "items",
+            type: "array",
+            required: true,
+            default: null,
+            description: "List of ticket types and quantities to purchase. Each item needs ticket_type_id (from the event's ticket_types) and quantity.",
+          },
+          {
+            name: "customer_email",
+            type: "string",
+            required: true,
+            default: null,
+            description: "The buyer's email address. Used to send the booking confirmation and any refund emails.",
+          },
+          {
+            name: "customer_name",
+            type: "string",
+            required: true,
+            default: null,
+            description: "The buyer's full name (first and last). Must contain a space, e.g. 'John Doe'.",
+          },
+          {
+            name: "customer_phone",
+            type: "string",
+            required: true,
+            default: null,
+            description: "The buyer's phone number including country code, e.g. +911234567890.",
+          },
+          {
+            name: "customer_timezone",
+            type: "string",
+            required: true,
+            default: null,
+            description: "The buyer's IANA timezone. Pass Intl.DateTimeFormat().resolvedOptions().timeZone from the browser. Used to format dates in refund emails.",
+          },
+        ],
         requestBody: {
           event_id: "ev_8187172",
           items: [
@@ -642,66 +727,109 @@ useEffect(() => {
         responses: [
           {
             status: 200,
-            description: "Session created — paid event (redirect user to checkout_url)",
+            description: "Session created. Paid event. Redirect user to checkout_url.",
             body: {
               session_id: "cs_live_abc123xyz",
-              status: "pending",
-              url: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
               client_id: "c8f3a2b1-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
+              url: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
+              status: "pending",
               hold_expires_at: "2024-01-20T15:00:00.000Z",
               held_quantity: 2,
             },
           },
           {
             status: 200,
-            description: "Session created — free event (booking immediately confirmed)",
+            description: "Session created. Free event. Booking immediately confirmed.",
             body: {
               session_id: "550e8400-e29b-41d4-a716-446655440000",
-              status: "complete",
-              url: "https://yoursite.com/checkout/success?session_id=550e8400-e29b-41d4-a716-446655440000",
               client_id: "c8f3a2b1-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
+              url: "https://yoursite.com/checkout/success?session_id=550e8400-e29b-41d4-a716-446655440000",
+              status: "complete",
             },
           },
         ],
         codeExamples: [
           {
             title: "JavaScript",
-            note: "Store the full session data in sessionStorage — name, email, phone, and ticketsParam are used to pre-fill the form if the user returns via browser Back or Stripe Cancel.\n\n⏱ Timing: The ticket hold is 10 minutes. The Stripe Checkout session is valid for up to 30 minutes. Two expiry scenarios: (1) Customer pays after the 10-minute hold window but within the Stripe session — the backend checks availability: tickets still available → booking completes and tickets are issued; no tickets left → charge is auto-refunded and a refund email is sent. (2) Customer tries to pay after 30 minutes — the Stripe session itself is closed and Stripe shows an expiry error. Show a 10-minute countdown in your UI.",
+            note: null,
+            noteBullets: [
+              "After creating the session, save all data to `sessionStorage` before redirecting. Store `sessionId`, `expiresAt`, `stripeUrl`, `eventId`, `ticketsParam`, `name`, `email`, and `phone`. These are used to pre-fill the checkout form if the user returns via the browser Back button or the Stripe Cancel page.",
+              "TicketTailor places a `10-minute` hold on the selected tickets. The Stripe Checkout session URL is valid for `30 minutes`. These are two separate timers.",
+              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the hold is still valid. If valid, clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired, call `POST /release-hold` to free the tickets and show a session expired message.",
+              "**Scenario 1** — User pays between 10 and 30 minutes (after hold expires but Stripe still open). The backend checks if tickets are still available. If yes, booking completes and tickets are issued. If no, the charge is auto-refunded and a refund email is sent.",
+              "**Scenario 2** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
+            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
 const { data } = await axios.post(\`\${BASE}/site/checkout/session\`, {
-  event_id: 'ev_8187172',
-  items: [{ ticket_type_id: 'tt_6308858', quantity: 1 }],
-  customer_email: 'user@example.com',
-  customer_name: 'John Doe',
-  customer_phone: '+911234567890',
-  customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  event_id:          'ev_8187172',
+  items:             [{ ticket_type_id: 'tt_6317546', quantity: 1 }],
+  customer_email:    'john.doe@example.com',
+  customer_name:     'John Doe',
+  customer_phone:    '+911234567890',
+  customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone  // e.g. "Asia/Kolkata" — used to format dates in refund emails in the customer's local time
 })
 
 if (data.status === 'complete') {
-  // Free ticket — booking confirmed immediately
-  window.location.href = data.url  // → /checkout/success?session_id=...
+  // Free event — booking confirmed, redirect to success page
+  window.location.href = data.url
   return
 }
 
-// Paid ticket — save session data for Back button / Cancel page pre-fill
+// Paid event — store all session data before redirecting to Stripe
 sessionStorage.setItem('tt_hold', JSON.stringify({
-  sessionId:    data.session_id,
-  expiresAt:    data.hold_expires_at,
-  stripeUrl:    data.url,
-  eventId:      eventId,
-  ticketsParam: ticketsParam,   // JSON string — reconstructs checkout URL
-  name:         name,
-  email:        email,
-  phone:        phone,
+  sessionId:    data.session_id,       // "cs_test_a1yHZXe0p5XuNxSt..."
+  expiresAt:    data.hold_expires_at,  // "2026-05-05T16:14:26.512189+00:00"
+  stripeUrl:    data.url,              // "https://checkout.stripe.com/c/pay/cs_test_..."
+  eventId:      'ev_8187172',
+  ticketsParam: '{"tt_6317546":1}',   // JSON string — used to rebuild checkout URL
+  name:         'John Doe',
+  email:        'john.doe@example.com',
+  phone:        '+911234567890',
 }))
 
-// Redirect to Stripe — user has 10 min to complete payment
-window.location.href = data.url`,
+// Redirect user to Stripe Checkout
+window.location.href = data.url
+
+
+// ── Back button handler (on your checkout page) ───────────────────────────────
+function handleBack() {
+  const raw = sessionStorage.getItem('tt_hold')
+  if (!raw) {
+    navigate('/events/' + eventId)
+    return
+  }
+
+  const hold = JSON.parse(raw)
+  const isExpired = !hold.expiresAt || new Date(hold.expiresAt) < new Date()
+
+  if (isExpired) {
+    // Hold expired — release it and show session expired screen
+    sessionStorage.removeItem('tt_hold')
+    fetch(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`, {
+      method: 'POST'
+    }).catch(() => {})
+    setSessionExpired(true)
+    return
+  }
+
+  // Hold still valid — pre-fill form and navigate back
+  setName(hold.name)
+  setEmail(hold.email)
+  setPhone(hold.phone)
+  navigate('/events/' + hold.eventId)
+}`,
           },
           {
             title: "React (useEffect + form)",
             note: null,
+            noteBullets: [
+              "After creating the session, save all data to `sessionStorage` before redirecting. Store `sessionId`, `expiresAt`, `stripeUrl`, `eventId`, `ticketsParam`, `name`, `email`, and `phone`. These are used to pre-fill the checkout form if the user returns via the browser Back button or the Stripe Cancel page.",
+              "TicketTailor places a `10-minute` hold on the selected tickets. The Stripe Checkout session URL is valid for `30 minutes`. These are two separate timers.",
+              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the hold is still valid. If valid, clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired, call `POST /release-hold` to free the tickets and show a session expired message.",
+              "**Scenario 1** — User pays between 10 and 30 minutes (after hold expires but Stripe still open). The backend checks if tickets are still available. If yes, booking completes and tickets are issued. If no, the charge is auto-refunded and a refund email is sent.",
+              "**Scenario 2** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
+            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
 const handleSubmit = async () => {
@@ -711,7 +839,7 @@ const handleSubmit = async () => {
     customer_email: email,
     customer_name: name,
     customer_phone: phone,
-    customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,  // e.g. "Asia/Kolkata" — formats refund email dates in customer's local time
   })
 
   if (data.hold_expires_at) {
@@ -724,6 +852,33 @@ const handleSubmit = async () => {
   }
 
   window.location.href = data.url
+}
+
+// ── Back button handler (on your checkout page) ───────────────────────────────
+const handleBack = () => {
+  const raw = sessionStorage.getItem('tt_hold')
+  if (!raw) {
+    navigate(\`/events/\${eventId}\`)
+    return
+  }
+
+  const hold = JSON.parse(raw)
+  const isExpired = !hold.expiresAt || new Date(hold.expiresAt) < new Date()
+
+  if (isExpired) {
+    // Hold expired — release it and show session expired screen
+    sessionStorage.removeItem('tt_hold')
+    axios.post(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`)
+      .catch(() => {})
+    setSessionExpired(true)
+    return
+  }
+
+  // Hold still valid — pre-fill form and navigate back
+  setName(hold.name)
+  setEmail(hold.email)
+  setPhone(hold.phone)
+  navigate(\`/events/\${hold.eventId}\`)
 }`,
           },
         ],
@@ -761,7 +916,15 @@ const handleSubmit = async () => {
         path: "/site/checkout/session/{session_id}",
         title: "Get Session Status",
         description:
-          "Retrieves the current status of a checkout session. Poll this endpoint on your success page (every 3 s, max 10 attempts) to confirm payment processing after Stripe redirects the user back. Possible statuses: complete (payment confirmed, tickets issued, email sent), pending (webhook not yet arrived — keep polling), pending_recovery (missed webhook detected, backend is auto-recovering — keep polling), failed (payment could not be verified), refunded (ticket hold expired while payment was processing — full refund has been auto-issued and a refund notification email was sent to the customer; if a ticket was already issued in TicketTailor it is automatically voided before the refund is processed).",
+          "Returns the current status of a checkout session. Poll this on your success page after Stripe redirects the user back. The webhook usually arrives 1 to 5 seconds after the redirect.",
+        bullets: [
+          "After Stripe redirects the user to your success page, poll this endpoint every 3 seconds until status is 'complete', 'refunded', or 'failed'. If no confirmation arrives within 30 seconds, show a message like 'Payment is still verifying. Please check your email in 5 minutes.'.",
+          "`status='complete'` means tickets are issued and a confirmation email has been sent. **Safe to show the success screen.**",
+          "`status='refunded'` means the payment was charged but tickets could not be issued because they sold out at the exact moment another buyer paid. The charge is automatically refunded. **Show a refund notice, not a payment error.**",
+          "`status='pending_recovery'` means a webhook was missed and the backend is auto-recovering. **Keep polling.**",
+          "**Never** clear `sessionStorage` before confirming `status='complete'`. You may need it for resume logic.",
+        ],
+        flow: null,
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: [
@@ -777,29 +940,7 @@ const handleSubmit = async () => {
         responses: [
           {
             status: 200,
-            description: "Free checkout — session already complete",
-            body: {
-              session_id: "bb1e409f-aa50-42d4-a716-446655440000",
-              status: "complete",
-              client: {
-                id: "a566bf66-5651-45b1-9148-d6328491ef2b",
-                name: "Shootah",
-              },
-              payments: [
-                {
-                  id: 302,
-                  event_id: "ev_8187172",
-                  ticket_type_name: "General Admission",
-                  quantity: 1,
-                  total_amount_cents: 0,
-                  status: "complete",
-                },
-              ],
-            },
-          },
-          {
-            status: 200,
-            description: "Paid checkout — awaiting Stripe webhook",
+            description: "Paid checkout. Awaiting Stripe webhook.",
             body: {
               session_id: "cs_live_abc123xyz",
               status: "pending",
@@ -821,7 +962,7 @@ const handleSubmit = async () => {
           },
           {
             status: 200,
-            description: "Missed webhook detected — recovery queued",
+            description: "Missed webhook detected. Recovery queued.",
             body: {
               session_id: "cs_live_abc123xyz",
               status: "pending_recovery",
@@ -843,11 +984,10 @@ const handleSubmit = async () => {
           },
           {
             status: 200,
-            description: "Ticket hold expired mid-payment — refund auto-issued",
+            description: "Tickets sold out during payment. Charge auto-refunded.",
             body: {
               session_id: "cs_live_abc123xyz",
               status: "refunded",
-              tt_error: null,
               client: {
                 id: "a566bf66-5651-45b1-9148-d6328491ef2b",
                 name: "Shootah",
@@ -866,7 +1006,7 @@ const handleSubmit = async () => {
           },
           {
             status: 200,
-            description: "Payment could not be verified — show error to user",
+            description: "Payment could not be verified. Show error to user.",
             body: {
               session_id: "cs_live_abc123xyz",
               status: "failed",
@@ -924,7 +1064,15 @@ useEffect(() => {
           },
           {
             title: "Success page polling",
-            note: "Stripe redirects the user to your success page BEFORE the payment webhook arrives at the backend (usually 1–5 s later). Poll every 3 s up to 10 times (30 s total). Never show a success screen without first confirming status === 'complete'.",
+            note: null,
+            noteBullets: [
+              "Stripe redirects the user to your success page **before** the webhook arrives at the backend. The webhook typically takes `1 to 5 seconds` after the redirect.",
+              "Poll every `3 seconds`, up to `10 attempts` (`30 seconds` total). Stop as soon as status is `complete`, `refunded`, or `failed`.",
+              "**status = complete** — tickets issued, confirmation email sent. Show the success screen.",
+              "**status = refunded** — tickets sold out during payment, charge auto-refunded. Show a refund notice.",
+              "**status = failed** — payment could not be verified. Show a payment error screen.",
+              "If still `pending` after 10 attempts, show a message like 'Payment is still verifying. Please check your email in 5 minutes.'.",
+            ],
             code: `let attempts = 0
 const MAX = 10
 let cancelled = false
@@ -1007,7 +1155,10 @@ if (data.status === 'expired') { showProcessingRefund() }`,
         path: "/site/checkout/session/{session_id}/release-hold",
         title: "Release Ticket Hold",
         description:
-          "Releases a ticket hold. Holds expire automatically after 10 minutes, but calling this early frees up the tickets immediately for other buyers. Always returns 200 even if the hold is already released or expired.",
+          "Call this when the user clicks the Back button on your checkout page. It releases the ticket hold immediately so the inventory becomes available for other buyers.",
+        bullets: [
+"Always returns 200, even if the hold has already expired.",
+        ],
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: [
@@ -1023,7 +1174,7 @@ if (data.status === 'expired') { showProcessingRefund() }`,
         responses: [
           {
             status: 200,
-            description: "Hold released (best-effort — always returns 200)",
+            description: "Hold released. Best-effort, always returns 200.",
             body: {
               released: true,
             },
@@ -1067,7 +1218,7 @@ const handleBack = () => {
           },
           {
             title: "Auto-release on expiry",
-            note: "Use a single setTimeout (not setInterval) that fires at the exact expiry timestamp. No countdown is shown to the user — the release happens silently in the background.",
+            note: "Use a single setTimeout (not setInterval) that fires at the exact expiry timestamp. No countdown is shown to the user. The release happens silently in the background.",
             code: `// Silent background release when hold expires
 const holdData = JSON.parse(sessionStorage.getItem('tt_hold') || 'null')
 if (!holdData) return
@@ -1086,374 +1237,145 @@ return () => clearTimeout(t)`,
         ],
         errorCodes: null,
       },
-    ],
-  },
-  {
-    id: "refunds",
-    title: "Refunds",
-    icon: "RefreshCcw",
-    endpoints: [
-      {
-        id: "refund-lifecycle",
-        method: "GUIDE",
-        path: null,
-        title: "Refund Lifecycle",
-        description:
-          "Talenta auto-refunds customers in three scenarios — no manual action needed. In every case: the Stripe charge is reversed via the API, all Payment rows are set to status='refunded', and a refund notification email is sent to the customer showing the amount, the original payment date/card, and (if customer_timezone was passed at checkout) all dates in the customer's local timezone. Refunds typically appear on the customer's statement in 3–10 business days.",
-        auth: { required: false, note: null },
-        queryParams: null,
-        pathParams: null,
-        requestBody: null,
-        responses: [
-          {
-            status: 200,
-            description: "Trigger 1 — Session expired (frontend hold timer hit zero)",
-            body: {
-              trigger: "Frontend countdown reached 0 → POST release-hold → webhook checkout.session.expired",
-              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
-              session_status_before: "expired",
-              session_status_after: "refunded",
-              email_sent: true,
-              note: "The frontend fires POST /release-hold when its 10-min countdown hits zero. Stripe sends a checkout.session.expired webhook. The backend detects a completed payment on that session, issues the refund, marks payments as refunded, and sends the email.",
-            },
-          },
-          {
-            status: 200,
-            description: "Trigger 2 — TT hold expired server-side (orphaned pending payment)",
-            body: {
-              trigger: "TT hold expired before Stripe was completed — backend orphan cleanup",
-              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
-              session_status_before: "pending",
-              session_status_after: "refunded",
-              email_sent: true,
-              note: "If the user abandons Stripe without paying, the TT hold expires after 10 min. The backend orphan-cleanup job detects the Stripe session is expired but payment was taken (edge case), refunds via Stripe, and sends the email.",
-            },
-          },
-          {
-            status: 200,
-            description: "Trigger 3 — Sold-out race condition (payment completed but tickets gone)",
-            body: {
-              trigger: "Stripe payment_intent.succeeded webhook — but TT tickets already sold by another buyer",
-              stripe_action: "stripe.Refund.create({ payment_intent: pi_xxx })",
-              session_status_before: "complete (Stripe) / pending (DB)",
-              session_status_after: "refunded",
-              email_sent: true,
-              note: "Two buyers complete payment at nearly the same time. The second buyer's webhook arrives and finds no inventory left. The backend immediately refunds the charge and sends the refund email. This is the only refund path that cannot be prevented — it is a deliberate safety net.",
-            },
-          },
-          {
-            status: 200,
-            description: "Trigger 4 — Hold expired but ticket was already issued (post-hold payment completed)",
-            body: {
-              trigger: "Customer completes Stripe payment after the 10-minute hold window (Stripe URL still valid up to 30 min)",
-              stripe_action: "tt.void_ticket(tt_ticket_id) → stripe.Refund.create({ payment_intent: pi_xxx })",
-              session_status_before: "pending (hold expired, ticket may already be issued in TT)",
-              session_status_after: "refunded",
-              email_sent: true,
-              note: "The Stripe Checkout URL remains active for up to 30 minutes even after the 10-minute ticket hold expires. If a customer completes payment in that 10–30 minute window, the webhook arrives and the backend checks whether the hold is still valid. If the hold has expired: (1) if a TT ticket was already issued, it is immediately voided via the TT API before processing the refund; (2) the Stripe charge is refunded via the API; (3) payments are set to status='refunded'; (4) a refund notification email is sent. The customer will not keep the ticket.",
-            },
-          },
-        ],
-        codeExamples: [
-          {
-            title: "How the refund email is built",
-            note: "The refund email always shows: amount refunded, original payment date (from Stripe charge timestamp — not DB created_at), card brand and last 4 digits (from Stripe PaymentIntent.payment_method), and all dates formatted in the customer's local timezone (from customer_timezone stored at checkout). If Stripe data is unavailable (e.g. network error), the email falls back to the DB payment record timestamp and omits card details. The 'Paid On' date uses the Stripe latest_charge.created Unix timestamp — this is the most accurate payment time.",
-            code: `// What the backend does to build refund email dates:
-
-// 1. Retrieve full PaymentIntent from Stripe
-const pi = await stripe.PaymentIntent.retrieve(payment_intent_id, {
-  expand: ['payment_method', 'latest_charge']
-})
-
-// 2. Card details
-const card_brand = pi.payment_method?.card?.brand   // e.g. "visa"
-const card_last4 = pi.payment_method?.card?.last4   // e.g. "4242"
-
-// 3. Actual payment time (more accurate than DB created_at)
-const paid_at = pi.latest_charge?.created           // Unix timestamp
-
-// 4. Format in customer's timezone (stored when checkout was created)
-// customer_timezone = "Asia/Kolkata" (from Intl.DateTimeFormat at checkout)
-// All dates shown in the email are in the customer's local time — not UTC
-
-// Email shows:
-// Refunded:    $100.00
-// Paid On:     May 3, 2026, 3:49 AM        ← Stripe charge time in IST
-// Refunded To: •••• 4242  (Visa)`,
-          },
-          {
-            title: "Detecting refund on success page",
-            note: "The Stripe Checkout URL stays active for up to 30 minutes even though the ticket hold expires after 10 minutes. If the customer completes payment in that 10–30 minute window, Stripe still collects payment — but the backend detects the expired hold, voids any already-issued TT ticket, then immediately refunds the charge. The session status on GET /session/:id will be 'refunded'. Show a clear, empathetic explanation: the reservation expired, a full refund has been issued, check your email. Do NOT show a generic payment error — the customer's money IS being returned.",
-            code: `// On your /checkout/success page:
-const { data } = await axios.get(\`/site/checkout/session/\${sessionId}\`)
-
-switch (data.status) {
-  case 'complete':
-    // ✅ All good — tickets issued, email sent
-    showBookingConfirmed()
-    break
-
-  case 'refunded':
-    // 💸 Hold expired mid-payment — full refund in progress
-    showRefundNotice({
-      title: 'Payment Refunded',
-      message:
-        'Your ticket reservation expired while you were completing payment. ' +
-        'A full refund has been issued and will appear on your card in 3–10 business days. ' +
-        'Check your email for a refund confirmation.',
-      cta: 'Back to Events'
-    })
-    break
-
-  case 'failed':
-    showPaymentFailed()
-    break
-
-  default:
-    // pending / pending_recovery — keep polling (see Get Session Status)
-    scheduleNextPoll()
-}`,
-          },
-        ],
-        errorCodes: null,
-      },
-    ],
-  },
-  {
-    id: "back-button",
-    title: "Back Button & Resume",
-    icon: "RotateCcw",
-    endpoints: [
       {
         id: "back-button-resume",
         method: "GUIDE",
         path: null,
         title: "Back Button & Session Resume",
         description:
-          "When a user presses the browser Back button from Stripe's hosted checkout page, the browser may restore your page from the bfcache (Back/Forward Cache). The correct behaviour: detect the restore, pre-fill the form with the details already stored in sessionStorage (name, email, phone), and skip the Terms & Conditions modal when Pay is clicked again — the user goes straight back to their existing Stripe session. No new hold, no duplicate charge, no countdown banner. If the hold has expired by the time they click Pay, show a 'Session Expired' screen and redirect home. The Stripe cancel_url follows the same pattern: valid hold → redirect to pre-filled checkout form; expired → Session Expired screen.",
+          "The frontend must handle two distinct navigation scenarios: the user clicking Back before payment (release the hold), and the user returning to an in-progress session (resume from sessionStorage). Both require explicit frontend logic.",
+        tip: "Frontend must handle this. The backend has no concept of 'back' or 'resume' — it only stores session state. All navigation decisions are made in the browser.",
+        bullets: [
+
+          "**Back or Cancel on Stripe's page:** Do NOT release the hold. Stripe's cancel URL returns the user to your site — check `sessionStorage` for an existing `tt_hold` and resume the session. The user may re-enter payment on the same Stripe URL.",
+          "**On page load of your checkout page:** Always check `sessionStorage` for a `tt_hold` entry first. If one exists and `expiresAt` is still in the future, resume that session instead of creating a new one.",
+          "**`sessionStorage` is the source of truth** for in-progress checkout. Store `sessionId`, `url`, `status`, `expiresAt`, and `heldQuantity` immediately after `POST /site/checkout/session` succeeds.",
+          "**Never clear `sessionStorage`** until `status='complete'` is confirmed via `GET /site/checkout/session/{id}`. Clearing early breaks resume logic.",
+          "If `expiresAt` has passed when the user returns: **clear `sessionStorage`, show a Session Expired screen, and auto-redirect to the home or event page after 3 seconds.** Do not create a new session automatically.",
+          "**The backend also releases the hold automatically** when `POST /site/checkout/session/{session_id}/release-hold` is called by your Back button. You do not need to do anything extra — calling it once from the frontend is enough.",
+        ],
+        flow: null,
         auth: { required: false, note: null },
         queryParams: null,
         pathParams: null,
         requestBody: null,
-        responses: [
-          {
-            status: 200,
-            description: "Valid hold — form pre-fills, Pay skips T&C",
-            body: {
-              scenario: "User pressed Back from Stripe (or Stripe Cancel). Hold not yet expired.",
-              sessionStorage_key: "tt_hold",
-              sessionStorage_value: {
-                sessionId: "cs_live_abc123xyz",
-                expiresAt: "2026-05-03T04:05:00.000Z",
-                stripeUrl: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
-                eventId: "ev_8187172",
-                ticketsParam: "{\"tt_type_123\":2}",
-                name: "Jane Doe",
-                email: "jane@example.com",
-                phone: "+44 7700 900000",
-              },
-              ui_action: "Form pre-fills with stored name/email/phone. Clicking Pay skips T&C and redirects straight to existing Stripe session — no new hold created.",
-            },
-          },
-          {
-            status: 200,
-            description: "Expired or missing — Session Expired screen",
-            body: {
-              scenario: "User returned but hold has expired or sessionStorage is empty.",
-              ui_action: "Show 'Session Expired' card → 3-second auto-redirect to home ('/').",
-            },
-          },
-        ],
+        responses: [],
         codeExamples: [
           {
-            title: "sessionStorage schema & pre-fill on return",
-            note: "Store all customer details in sessionStorage when the checkout session is created. On return (bfcache restore or fresh page load), read them back to pre-fill the form. The pageshow event handles bfcache restores; the event-load effect handles fresh loads. Both reset processing state so the Pay button is usable again.",
-            code: `// ── sessionStorage schema (written when POST /site/checkout/session succeeds) ──
-// {
-//   sessionId:    "cs_live_abc123xyz",           // internal session ID
-//   expiresAt:    "2026-05-03T04:05:00.000Z",    // ISO — TT hold expires in 10 min
-//   stripeUrl:    "https://checkout.stripe.com/c/pay/cs_...",
-//   eventId:      "ev_8187172",
-//   ticketsParam: '{"tt_type_123":2}',           // JSON — reconstructs checkout URL
-//   name:         "Jane Doe",                    // pre-fill on return
-//   email:        "jane@example.com",
-//   phone:        "+44 7700 900000",
-// }
+            title: "JavaScript",
+            noteBullets: [
+              "**Always check sessionStorage on checkout page load** before creating a new session.",
 
-// ── On event load — pre-fill form if returning from Stripe ────────────────────
-// (run inside the event fetch .then() callback, after setTickets())
-try {
+              "**Stripe cancel URL** → do NOT release hold. Resume the existing session.",
+              "**Never clear sessionStorage** until `status='complete'` is confirmed.",
+            ],
+            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
+
+// ── On checkout page load ─────────────────────────────────────
+const raw = sessionStorage.getItem('tt_hold')
+if (raw) {
+  const hold = JSON.parse(raw)
+  const isAlive = new Date(hold.expiresAt) > new Date()
+  if (isAlive) {
+    // Resume: redirect user back to the existing Stripe URL
+    window.location.href = hold.url
+  } else {
+    // Expired: clear storage, show Session Expired screen, redirect after 3s
+    sessionStorage.removeItem('tt_hold')
+    showSessionExpiredScreen()
+    setTimeout(() => { window.location.href = '/' }, 3000)
+  }
+}
+
+// ── Back button on YOUR checkout page (before Stripe) ────────
+async function handleBack(sessionId, eventId) {
+  sessionStorage.removeItem('tt_hold')
+  await fetch(\`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`, {
+    method: 'POST'
+  }).catch(() => {})
+  // Navigate to event — never use history.back()
+  window.location.href = \`/events/\${eventId}\`
+}
+
+// ── Stripe cancel URL handler (user clicked Back on Stripe) ──
+// DO NOT release hold here. Check sessionStorage and resume.
+function handleStripeCancel() {
   const raw = sessionStorage.getItem('tt_hold')
-  if (raw) {
-    const hold = JSON.parse(raw)
-    const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-    if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
-      if (hold.name)  setName(hold.name)
-      if (hold.email) setEmail(hold.email)
-      if (hold.phone) setPhone(hold.phone)
-    }
+  if (!raw) return
+  const hold = JSON.parse(raw)
+  const isAlive = new Date(hold.expiresAt) > new Date()
+  if (isAlive) {
+    // Still valid — offer the user a button to re-enter Stripe
+    showResumeUI(hold.url)
+  } else {
+    // Expired: clear storage, show Session Expired screen, redirect after 3s
+    sessionStorage.removeItem('tt_hold')
+    showSessionExpiredScreen()
+    setTimeout(() => { window.location.href = '/' }, 3000)
   }
-} catch {}
-
-// ── On bfcache restore (browser Back) — reset processing + pre-fill ───────────
-window.addEventListener('pageshow', (e) => {
-  if (!e.persisted) return
-  // Reset — processing was true before the Stripe redirect
-  setProcessing(false)
-  submittingRef.current = false
-  // Re-fill form fields from session (in case React state was stale)
-  try {
-    const raw = sessionStorage.getItem('tt_hold')
-    if (raw) {
-      const hold = JSON.parse(raw)
-      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-      if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
-        if (hold.name)  setName(hold.name)
-        if (hold.email) setEmail(hold.email)
-        if (hold.phone) setPhone(hold.phone)
-      }
-    }
-  } catch {}
-})`,
-          },
-          {
-            title: "Pay button — skip T&C for existing sessions",
-            note: "Check sessionStorage at the very top of the Pay button handler — before form validation and before showing the Terms & Conditions modal. If a valid Stripe URL exists in the current tab's sessionStorage the user already accepted T&C when they created the session, so send them straight back to Stripe. If expired, show the Session Expired screen. Only show T&C for brand-new sessions.",
-            code: `// Pay button handler — sessionStorage check runs FIRST, before any validation
-function handlePayClick(e) {
-  e.preventDefault()
-  if (submittingRef.current || processing) return
-
-  // ── 1. Existing session check (highest priority) ──────────────────────────
-  try {
-    const raw = sessionStorage.getItem('tt_hold')
-    if (raw) {
-      const hold = JSON.parse(raw)
-      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-      if (hold.stripeUrl && expiresAt) {
-        if (expiresAt > new Date()) {
-          // Valid — redirect immediately, skip T&C and form validation entirely
-          window.location.href = hold.stripeUrl
-          return
-        } else {
-          // Expired — clear storage, show Session Expired screen → 3s → home
-          sessionStorage.removeItem('tt_hold')
-          setSessionExpired(true)
-          return
-        }
-      }
-    }
-  } catch {}
-
-  // ── 2. No existing session — validate form then show T&C ──────────────────
-  if (!name.trim() || name.trim().split(/\\s+/).length < 2) {
-    setNameError('Enter your full name — e.g. John Doe')
-    return
-  }
-  if (!email) { setCheckoutError('Email required'); return }
-  setShowTerms(true)   // T&C only shown for new sessions
 }`,
           },
           {
-            title: "Cancel page — same behaviour as Back button",
-            note: "Configure cancel_url as /checkout/cancel?event_id={event_id}. When Stripe redirects here, check sessionStorage: if the hold is still valid redirect silently to the pre-filled checkout form (identical to the Back button experience); if expired or missing show a Session Expired card with a 3-second auto-redirect to home. Do NOT release the hold here — the user may have pressed cancel by accident and clicking Pay again on the pre-filled form goes straight back to Stripe.",
-            code: `// ── /checkout/cancel page ────────────────────────────────────────────────────
-// cancel_url: /checkout/cancel?event_id={event_id}
-// Behaves identically to the browser Back button.
+            title: "React (useEffect)",
+            noteBullets: [
+              "**Run the resume check in useEffect on mount** — before rendering the checkout form.",
+              "**Back button** must call `releaseHold()` then navigate to the event, not `navigate(-1)`.",
+              "**Stripe cancel URL** → read `sessionStorage` and offer resume, do not release hold.",
+              "**Never clear sessionStorage** until `status='complete'` is confirmed.",
+            ],
+            code: `import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
 
-useEffect(() => {
-  try {
-    const raw = sessionStorage.getItem('tt_hold')
-    if (raw) {
-      const hold = JSON.parse(raw)
-      const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-      if (expiresAt && expiresAt > new Date() && hold.eventId && hold.ticketsParam) {
-        // Valid hold — redirect to pre-filled checkout form (no release, user may resume)
-        navigate(
-          \`/checkout?eventId=\${hold.eventId}&tickets=\${encodeURIComponent(hold.ticketsParam)}\`,
-          { replace: true }
-        )
-        return
-      }
-    }
-  } catch {}
+const BASE = 'https://talenta.athivaone.com/api/v1'
 
-  // No valid hold — show Session Expired → 3s redirect to home
-  setExpired(true)
-}, [])`,
-          },
-          {
-            title: "UI Back button — always navigate to event page",
-            note: "The back button inside the checkout form must navigate to /events/{eventId} directly — never use navigate(-1). After the user returns from Stripe via browser Back, history[-1] is the Stripe hosted page. Using navigate(-1) would send them back into Stripe. Always navigate to the event page explicitly. Also clear sessionStorage and release the hold (fire-and-forget) so inventory is freed immediately.",
-            code: `// ← Back button inside /checkout page
-<button onClick={() => {
-  // Clear session and release hold before navigating away
-  try {
+export function CheckoutPage({ eventId }) {
+  const navigate = useNavigate()
+  const [expired, setExpired] = useState(false)
+
+  // ── Resume check on mount ─────────────────────────────────
+  useEffect(() => {
     const raw = sessionStorage.getItem('tt_hold')
-    if (raw) {
-      const hold = JSON.parse(raw)
+    if (!raw) return
+    const hold = JSON.parse(raw)
+    const isAlive = new Date(hold.expiresAt) > new Date()
+    if (isAlive) {
+      // Resume: send user back to Stripe
+      window.location.href = hold.url
+    } else {
+      // Expired: clear storage, show Session Expired screen, redirect after 3s
       sessionStorage.removeItem('tt_hold')
-      if (hold.sessionId) {
-        // Fire-and-forget — frees inventory immediately
-        fetch(\`/site/checkout/session/\${hold.sessionId}/release-hold\`, {
-          method: 'POST'
-        }).catch(() => {})
-      }
+      setExpired(true)
+      setTimeout(() => navigate('/'), 3000)
     }
-  } catch {}
-  // Always navigate to event page — NEVER use navigate(-1) here.
-  // After Stripe Back, history[-1] is the Stripe page; navigate(-1) would go back into it.
-  navigate(\`/events/\${eventId}\`)
-}}>
-  ← Back
-</button>`,
-          },
-          {
-            title: "Full state machine",
-            note: "All states the checkout flow can be in and what to show the user at each stage.",
-            code: `// ── Checkout page state machine ──────────────────────────────────────────────
+  }, [])
 
-// STATE 1: No active hold — show normal checkout form
-//   sessionStorage('tt_hold') = null
-//   → User fills name/email/phone, clicks Pay
-//   → T&C modal shown → user accepts
-//   → POST /site/checkout/session → creates TT hold + Stripe session
-//   → Store { sessionId, expiresAt, stripeUrl, eventId, ticketsParam, name, email, phone }
-//   → Redirect to stripeUrl
+  // ── Back button on YOUR page (before Stripe) ─────────────
+  const handleBack = async () => {
+    const raw = sessionStorage.getItem('tt_hold')
+    sessionStorage.removeItem('tt_hold')
+    if (raw) {
+      const { sessionId } = JSON.parse(raw)
+      await axios.post(
+        \`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`
+      ).catch(() => {})
+    }
+    // Never use navigate(-1) — history[-1] may be the Stripe page
+    navigate(\`/events/\${eventId}\`)
+  }
 
-// STATE 2: User presses browser Back from Stripe
-//   pageshow fires with e.persisted = true  (bfcache restore)
-//   OR fresh page reload (no bfcache)
-//   → form pre-fills from tt_hold (name, email, phone)
-//   → Click Pay → sessionStorage has valid hold → skip T&C → redirect to Stripe
-//   → No new hold, no duplicate charge
+  if (expired) return <SessionExpiredScreen />
 
-// STATE 3: User clicks Cancel on Stripe hosted page
-//   Stripe redirects to /checkout/cancel?event_id={id}
-//   → CheckoutCancelPage reads sessionStorage
-//   → Valid hold → redirect to /checkout?eventId=...&tickets=... (same as Back button)
-//   → Expired/missing → show "Session Expired" → 3s redirect to home
-
-// STATE 4: Hold expired (> 10 min since creation)
-//   User clicks Pay on pre-filled form OR arrives at cancel page after expiry
-//   → sessionStorage.removeItem('tt_hold')
-//   → Show "Session Expired" card → 3s auto-redirect to '/'
-
-// STATE 5: User clicks UI Back button on /checkout
-//   → Clear sessionStorage + POST release-hold (fire-and-forget)
-//   → navigate('/events/' + eventId)   — never navigate(-1)
-
-// STATE 6: User on /checkout/success
-//   Poll GET /site/checkout/session/:id every 3s (max 10 attempts)
-//   complete          → show booking confirmed
-//   refunded          → show refund notice (hold expired mid-payment)
-//   failed            → show payment failed
-//   pending           → keep polling
-//   pending_recovery  → keep polling, show "still confirming" at timeout`,
+  return (
+    <button onClick={handleBack}>Back</button>
+  )
+}`,
           },
         ],
         errorCodes: null,
       },
     ],
   },
+
+
 ]

@@ -1,10 +1,11 @@
-import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, HelpCircle, RefreshCcw, RotateCcw } from "lucide-react"
+import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, HelpCircle, RefreshCcw, RotateCcw, Clock, ChevronDown } from "lucide-react"
+import { useState } from "react"
 import { useTheme } from "@/components/theme-provider.jsx"
 import { MethodBadge } from "@/components/MethodBadge"
 import { BASE_URL } from "@/data/api-docs"
 import { cn } from "@/lib/utils"
 
-const SECTION_ICONS = { Activity, Globe, ShoppingCart, RefreshCcw, RotateCcw }
+const SECTION_ICONS = { Activity, Globe, ShoppingCart, RefreshCcw, RotateCcw, Clock }
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme()
@@ -36,6 +37,28 @@ function ThemeToggle() {
 }
 
 function SidebarContent({ sections, activeId, onNavClick }) {
+  const [openSections, setOpenSections] = useState({})
+
+  // Auto-open section containing the active endpoint
+  const activeSectionId = sections.find((s) =>
+    s.endpoints.some((e) => e.id === activeId)
+  )?.id
+
+  function handleSectionClick(section) {
+    const isCurrentlyOpen = openSections[section.id] ?? (section.id === activeSectionId)
+    if (isCurrentlyOpen) {
+      // Collapse
+      setOpenSections((prev) => ({ ...prev, [section.id]: false }))
+    } else {
+      // Expand and navigate to first endpoint
+      setOpenSections((prev) => ({ ...prev, [section.id]: true }))
+      const firstEndpoint = section.endpoints[0]
+      if (firstEndpoint) {
+        onNavClick(firstEndpoint.id)
+      }
+    }
+  }
+
   return (
     <>
       {/* Brand header */}
@@ -45,7 +68,7 @@ function SidebarContent({ sections, activeId, onNavClick }) {
             <span className="font-semibold tracking-tight text-foreground leading-none">Talenta API</span>
             <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary leading-none">v1</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">Public Reference</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">API Documentation</p>
         </div>
         <ThemeToggle />
       </div>
@@ -54,13 +77,23 @@ function SidebarContent({ sections, activeId, onNavClick }) {
       <nav className="sidebar-nav flex-1">
         {sections.map((section) => {
           const Icon = SECTION_ICONS[section.icon]
+          const isOpen = openSections[section.id] ?? (section.id === activeSectionId)
           return (
-            <div key={section.id} className="mb-1">
-              <div className="sidebar-nav-section">
-                {Icon && <Icon size={12} />}
-                {section.title}
-              </div>
-              {section.endpoints.map((endpoint) => {
+            <div key={section.id} className="mb-0.5">
+              <button
+                onClick={() => handleSectionClick(section)}
+                className="sidebar-nav-section w-full flex items-center justify-between cursor-pointer hover:text-foreground transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  {Icon && <Icon size={12} />}
+                  {section.title}
+                </span>
+                <ChevronDown
+                  size={12}
+                  className={cn("shrink-0 transition-transform duration-200", isOpen && "rotate-180")}
+                />
+              </button>
+              {isOpen && section.endpoints.map((endpoint) => {
                 const isActive = activeId === endpoint.id
                 return (
                   <a
@@ -79,7 +112,7 @@ function SidebarContent({ sections, activeId, onNavClick }) {
         })}
 
         {/* Support / Questions */}
-        <div className="mb-1">
+        <div className="mb-0.5">
           <div className="sidebar-nav-section">
             <HelpCircle size={12} />
             Support
