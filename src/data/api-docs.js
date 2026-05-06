@@ -293,8 +293,6 @@ useEffect(() => {
         tip: "Always call this endpoint before showing a checkout form to get live ticket availability.",
         bullets: [
           "Returns the full event details including name, date, venue, and **live ticket availability** for each ticket type.",
-          "**Poll this endpoint to keep ticket counts fresh.** When `held_count > 0` on any ticket type, poll every **30 seconds** — tickets are actively being held by another buyer. When no holds are active (`held_count = 0` on all types), poll every **60 seconds** is enough.",
-          "`quantity_available` already accounts for held tickets. Use it directly for availability checks — do not subtract `held_count` yourself.",
         ],
         keyFields: null,
         auth: {
@@ -431,32 +429,26 @@ useEffect(() => {
         codeExamples: [
           {
             title: "JavaScript",
-            noteBullets: [
-              "Use `quantity_available` per ticket type for availability checks — **do not subtract `held_count` yourself.**",
-              "**Poll every 30s** when `held_count > 0` (another buyer is actively holding tickets). **Poll every 60s** when no holds are active.",
-            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
 // ── Fetch event detail ────────────────────────────────────────
 const { data: event } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
 
-const { name, start, venue, ticket_types, total_remaining, total_held } = event
+const { name, start, venue, ticket_types, total_remaining } = event
 
 // ── Read availability per ticket type ────────────────────────
 ticket_types.forEach(tt => {
-  console.log(\`\${tt.name}: \${tt.quantity_available} available (held: \${tt.held_count})\`)
+  console.log(\`\${tt.name}: \${tt.quantity_available} available\`)
 })
 
-// ── Polling: adjust interval based on active holds ────────────
+// ── Polling every 60 seconds ──────────────────────────────────
 function startPolling(eventId, onUpdate) {
   let timer
 
   async function poll() {
     const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
     onUpdate(data)
-    // 30s if any holds active, 60s otherwise
-    const hasHolds = data.ticket_types.some(tt => tt.held_count > 0)
-    timer = setTimeout(poll, hasHolds ? 30_000 : 60_000)
+    timer = setTimeout(poll, 60_000)
   }
 
   poll()
@@ -465,10 +457,6 @@ function startPolling(eventId, onUpdate) {
           },
           {
             title: "React (useEffect)",
-            noteBullets: [
-              "Use `quantity_available` per ticket type for availability checks — **do not subtract `held_count` yourself.**",
-              "**Poll every 30s** when `held_count > 0` (another buyer is actively holding tickets). **Poll every 60s** when no holds are active.",
-            ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
 const [event, setEvent] = useState(null)
@@ -480,10 +468,7 @@ useEffect(() => {
     try {
       const { data } = await axios.get(\`\${BASE}/site/events/\${eventId}\`)
       setEvent(data)
-
-      // Poll faster when tickets are actively being held
-      const hasHolds = data.ticket_types.some(tt => tt.held_count > 0)
-      timer = setTimeout(fetchAndSchedule, hasHolds ? 30_000 : 60_000)
+      timer = setTimeout(fetchAndSchedule, 60_000)
     } catch {
       setError('Failed to load event')
     }
@@ -496,8 +481,7 @@ useEffect(() => {
 // Key fields per ticket type:
 // tt.name               → "General Admission"
 // tt.price              → 1000  (in cents, e.g. $10.00)
-// tt.quantity_available → 50    (use this — held already subtracted)
-// tt.held_count         → 2     (informational only)
+// tt.quantity_available → 50
 // tt.status             → "on_sale" | "sold_out" | "unavailable"`,
           },
         ],
@@ -733,8 +717,6 @@ useEffect(() => {
               client_id: "c8f3a2b1-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
               url: "https://checkout.stripe.com/c/pay/cs_live_abc123xyz",
               status: "pending",
-              hold_expires_at: "2024-01-20T15:00:00.000Z",
-              held_quantity: 2,
             },
           },
           {
@@ -753,11 +735,10 @@ useEffect(() => {
             title: "JavaScript",
             note: null,
             noteBullets: [
-              "After creating the session, save all data to `sessionStorage` before redirecting. Store `sessionId`, `expiresAt`, `stripeUrl`, `eventId`, `ticketsParam`, `name`, `email`, and `phone`. These are used to pre-fill the checkout form if the user returns via the browser Back button or the Stripe Cancel page.",
-              "TicketTailor places a `10-minute` hold on the selected tickets. The Stripe Checkout session URL is valid for `30 minutes`. These are two separate timers.",
-              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the hold is still valid. If valid, clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired, call `POST /release-hold` to free the tickets and show a session expired message.",
-              "**Scenario 1** — User pays between 10 and 30 minutes (after hold expires but Stripe still open). The backend checks if tickets are still available. If yes, booking completes and tickets are issued. If no, the charge is auto-refunded and a refund email is sent.",
-              "**Scenario 2** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
+              "After creating the session, save all data to `sessionStorage` before redirecting. Store `sessionId`, `expiresAt`, `stripeUrl`, `eventId`, `ticketsParam`, `name`, `email`, and `phone`. These are used to pre-fill the checkout form if the user returns via the browser Back button or the Stripe back button.",
+              "The Stripe Checkout session URL is valid for `30 minutes`.",
+              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the session is still valid, then clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired.",
+              "**Scenario** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
             ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
@@ -777,58 +758,28 @@ if (data.status === 'complete') {
 }
 
 // Paid event — store all session data before redirecting to Stripe
-sessionStorage.setItem('tt_hold', JSON.stringify({
-  sessionId:    data.session_id,       // "cs_test_a1yHZXe0p5XuNxSt..."
-  expiresAt:    data.hold_expires_at,  // "2026-05-05T16:14:26.512189+00:00"
+sessionStorage.setItem('co_session', JSON.stringify({
+  sessionId:    data.session_id,       // "cs_test_a1vskRuVsc86ycOZWodGBkj74XnkCpSQ..."
+  expiresAt:    new Date(Date.now() + 30 * 60 * 1000).toISOString(),  // frontend-calculated, 30 min from now
   stripeUrl:    data.url,              // "https://checkout.stripe.com/c/pay/cs_test_..."
   eventId:      'ev_8187172',
-  ticketsParam: '{"tt_6317546":1}',   // JSON string — used to rebuild checkout URL
+  ticketsParam: '{"tt_6318202":1}',   // JSON string — used to rebuild checkout URL
   name:         'John Doe',
   email:        'john.doe@example.com',
   phone:        '+911234567890',
 }))
 
 // Redirect user to Stripe Checkout
-window.location.href = data.url
-
-
-// ── Back button handler (on your checkout page) ───────────────────────────────
-function handleBack() {
-  const raw = sessionStorage.getItem('tt_hold')
-  if (!raw) {
-    navigate('/events/' + eventId)
-    return
-  }
-
-  const hold = JSON.parse(raw)
-  const isExpired = !hold.expiresAt || new Date(hold.expiresAt) < new Date()
-
-  if (isExpired) {
-    // Hold expired — release it and show session expired screen
-    sessionStorage.removeItem('tt_hold')
-    fetch(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`, {
-      method: 'POST'
-    }).catch(() => {})
-    setSessionExpired(true)
-    return
-  }
-
-  // Hold still valid — pre-fill form and navigate back
-  setName(hold.name)
-  setEmail(hold.email)
-  setPhone(hold.phone)
-  navigate('/events/' + hold.eventId)
-}`,
+window.location.href = data.url`,
           },
           {
             title: "React (useEffect + form)",
             note: null,
             noteBullets: [
               "After creating the session, save all data to `sessionStorage` before redirecting. Store `sessionId`, `expiresAt`, `stripeUrl`, `eventId`, `ticketsParam`, `name`, `email`, and `phone`. These are used to pre-fill the checkout form if the user returns via the browser Back button or the Stripe Cancel page.",
-              "TicketTailor places a `10-minute` hold on the selected tickets. The Stripe Checkout session URL is valid for `30 minutes`. These are two separate timers.",
-              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the hold is still valid. If valid, clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired, call `POST /release-hold` to free the tickets and show a session expired message.",
-              "**Scenario 1** — User pays between 10 and 30 minutes (after hold expires but Stripe still open). The backend checks if tickets are still available. If yes, booking completes and tickets are issued. If no, the charge is auto-refunded and a refund email is sent.",
-              "**Scenario 2** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
+              "The Stripe Checkout session URL is valid for `30 minutes`.",
+              "**Frontend must do — On Back button:** When the user returns to the checkout form, read `sessionStorage`. Pre-fill `name`, `email`, `phone` from the stored data. Check `expiresAt` to see if the session is still valid, then clicking Pay again skips the Terms and Conditions and redirects straight to the existing Stripe URL. If expired.",
+              "**Scenario** — User tries to pay after 30 minutes. The Stripe session itself has closed and Stripe shows an expiry error. The user must start a new checkout.",
             ],
             code: `const BASE = 'https://talenta.athivaone.com/api/v1'
 
@@ -842,43 +793,15 @@ const handleSubmit = async () => {
     customer_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,  // e.g. "Asia/Kolkata" — formats refund email dates in customer's local time
   })
 
-  if (data.hold_expires_at) {
-    sessionStorage.setItem('tt_hold', JSON.stringify({
-      sessionId: data.session_id,
-      expiresAt: data.hold_expires_at,
-      stripeUrl: data.url,
-      eventId, ticketsParam, name, email, phone,
-    }))
-  }
+  // Paid event — store all session data before redirecting to Stripe
+  sessionStorage.setItem('co_session', JSON.stringify({
+    sessionId: data.session_id,
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),  // frontend-calculated, 30 min from now
+    stripeUrl: data.url,
+    eventId, ticketsParam, name, email, phone,
+  }))
 
   window.location.href = data.url
-}
-
-// ── Back button handler (on your checkout page) ───────────────────────────────
-const handleBack = () => {
-  const raw = sessionStorage.getItem('tt_hold')
-  if (!raw) {
-    navigate(\`/events/\${eventId}\`)
-    return
-  }
-
-  const hold = JSON.parse(raw)
-  const isExpired = !hold.expiresAt || new Date(hold.expiresAt) < new Date()
-
-  if (isExpired) {
-    // Hold expired — release it and show session expired screen
-    sessionStorage.removeItem('tt_hold')
-    axios.post(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`)
-      .catch(() => {})
-    setSessionExpired(true)
-    return
-  }
-
-  // Hold still valid — pre-fill form and navigate back
-  setName(hold.name)
-  setEmail(hold.email)
-  setPhone(hold.phone)
-  navigate(\`/events/\${hold.eventId}\`)
 }`,
           },
         ],
@@ -1148,231 +1071,6 @@ if (data.status === 'expired') { showProcessingRefund() }`,
             description: "No session exists with this ID.",
           },
         ],
-      },
-      {
-        id: "release-hold",
-        method: "POST",
-        path: "/site/checkout/session/{session_id}/release-hold",
-        title: "Release Ticket Hold",
-        description:
-          "Call this when the user clicks the Back button on your checkout page. It releases the ticket hold immediately so the inventory becomes available for other buyers.",
-        bullets: [
-"Always returns 200, even if the hold has already expired.",
-        ],
-        auth: { required: false, note: null },
-        queryParams: null,
-        pathParams: [
-          {
-            name: "session_id",
-            type: "string",
-            required: true,
-            default: null,
-            description: "The session ID of the hold to release.",
-          },
-        ],
-        requestBody: null,
-        responses: [
-          {
-            status: 200,
-            description: "Hold released. Best-effort, always returns 200.",
-            body: {
-              released: true,
-            },
-          },
-        ],
-        codeExamples: [
-          {
-            title: "JavaScript",
-            note: null,
-            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
-
-const { data } = await axios.post(
-  \`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`
-)
-
-// Response:
-// data.released → true
-console.log(data.released) // true`,
-          },
-          {
-            title: "React (useEffect)",
-            note: null,
-            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
-
-// On checkout page UI Back button — clear storage, release hold, navigate to event
-const handleBack = () => {
-  try {
-    const raw = sessionStorage.getItem('tt_hold')
-    if (raw) {
-      const hold = JSON.parse(raw)
-      sessionStorage.removeItem('tt_hold')
-      if (hold.sessionId) {
-        fetch(\`\${BASE}/site/checkout/session/\${hold.sessionId}/release-hold\`, {
-          method: 'POST'
-        }).catch(() => {})
-      }
-    }
-  } catch {}
-  navigate(\`/events/\${eventId}\`)  // never use navigate(-1) — history[-1] may be Stripe
-}`,
-          },
-          {
-            title: "Auto-release on expiry",
-            note: "Use a single setTimeout (not setInterval) that fires at the exact expiry timestamp. No countdown is shown to the user. The release happens silently in the background.",
-            code: `// Silent background release when hold expires
-const holdData = JSON.parse(sessionStorage.getItem('tt_hold') || 'null')
-if (!holdData) return
-
-const msLeft = Math.max(0, new Date(holdData.expiresAt) - Date.now())
-
-const t = setTimeout(() => {
-  sessionStorage.removeItem('tt_hold')
-  // Best-effort — always returns 200
-  axios.post(\`\${BASE}/site/checkout/session/\${holdData.sessionId}/release-hold\`)
-    .catch(() => {})
-}, msLeft)
-
-return () => clearTimeout(t)`,
-          },
-        ],
-        errorCodes: null,
-      },
-      {
-        id: "back-button-resume",
-        method: "GUIDE",
-        path: null,
-        title: "Back Button & Session Resume",
-        description:
-          "The frontend must handle two distinct navigation scenarios: the user clicking Back before payment (release the hold), and the user returning to an in-progress session (resume from sessionStorage). Both require explicit frontend logic.",
-        tip: "Frontend must handle this. The backend has no concept of 'back' or 'resume' — it only stores session state. All navigation decisions are made in the browser.",
-        bullets: [
-
-          "**Back or Cancel on Stripe's page:** Do NOT release the hold. Stripe's cancel URL returns the user to your site — check `sessionStorage` for an existing `tt_hold` and resume the session. The user may re-enter payment on the same Stripe URL.",
-          "**On page load of your checkout page:** Always check `sessionStorage` for a `tt_hold` entry first. If one exists and `expiresAt` is still in the future, resume that session instead of creating a new one.",
-          "**`sessionStorage` is the source of truth** for in-progress checkout. Store `sessionId`, `url`, `status`, `expiresAt`, and `heldQuantity` immediately after `POST /site/checkout/session` succeeds.",
-          "**Never clear `sessionStorage`** until `status='complete'` is confirmed via `GET /site/checkout/session/{id}`. Clearing early breaks resume logic.",
-          "If `expiresAt` has passed when the user returns: **clear `sessionStorage`, show a Session Expired screen, and auto-redirect to the home or event page after 3 seconds.** Do not create a new session automatically.",
-          "**The backend also releases the hold automatically** when `POST /site/checkout/session/{session_id}/release-hold` is called by your Back button. You do not need to do anything extra — calling it once from the frontend is enough.",
-        ],
-        flow: null,
-        auth: { required: false, note: null },
-        queryParams: null,
-        pathParams: null,
-        requestBody: null,
-        responses: [],
-        codeExamples: [
-          {
-            title: "JavaScript",
-            noteBullets: [
-              "**Always check sessionStorage on checkout page load** before creating a new session.",
-
-              "**Stripe cancel URL** → do NOT release hold. Resume the existing session.",
-              "**Never clear sessionStorage** until `status='complete'` is confirmed.",
-            ],
-            code: `const BASE = 'https://talenta.athivaone.com/api/v1'
-
-// ── On checkout page load ─────────────────────────────────────
-const raw = sessionStorage.getItem('tt_hold')
-if (raw) {
-  const hold = JSON.parse(raw)
-  const isAlive = new Date(hold.expiresAt) > new Date()
-  if (isAlive) {
-    // Resume: redirect user back to the existing Stripe URL
-    window.location.href = hold.url
-  } else {
-    // Expired: clear storage, show Session Expired screen, redirect after 3s
-    sessionStorage.removeItem('tt_hold')
-    showSessionExpiredScreen()
-    setTimeout(() => { window.location.href = '/' }, 3000)
-  }
-}
-
-// ── Back button on YOUR checkout page (before Stripe) ────────
-async function handleBack(sessionId, eventId) {
-  sessionStorage.removeItem('tt_hold')
-  await fetch(\`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`, {
-    method: 'POST'
-  }).catch(() => {})
-  // Navigate to event — never use history.back()
-  window.location.href = \`/events/\${eventId}\`
-}
-
-// ── Stripe cancel URL handler (user clicked Back on Stripe) ──
-// DO NOT release hold here. Check sessionStorage and resume.
-function handleStripeCancel() {
-  const raw = sessionStorage.getItem('tt_hold')
-  if (!raw) return
-  const hold = JSON.parse(raw)
-  const isAlive = new Date(hold.expiresAt) > new Date()
-  if (isAlive) {
-    // Still valid — offer the user a button to re-enter Stripe
-    showResumeUI(hold.url)
-  } else {
-    // Expired: clear storage, show Session Expired screen, redirect after 3s
-    sessionStorage.removeItem('tt_hold')
-    showSessionExpiredScreen()
-    setTimeout(() => { window.location.href = '/' }, 3000)
-  }
-}`,
-          },
-          {
-            title: "React (useEffect)",
-            noteBullets: [
-              "**Run the resume check in useEffect on mount** — before rendering the checkout form.",
-              "**Back button** must call `releaseHold()` then navigate to the event, not `navigate(-1)`.",
-              "**Stripe cancel URL** → read `sessionStorage` and offer resume, do not release hold.",
-              "**Never clear sessionStorage** until `status='complete'` is confirmed.",
-            ],
-            code: `import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-
-const BASE = 'https://talenta.athivaone.com/api/v1'
-
-export function CheckoutPage({ eventId }) {
-  const navigate = useNavigate()
-  const [expired, setExpired] = useState(false)
-
-  // ── Resume check on mount ─────────────────────────────────
-  useEffect(() => {
-    const raw = sessionStorage.getItem('tt_hold')
-    if (!raw) return
-    const hold = JSON.parse(raw)
-    const isAlive = new Date(hold.expiresAt) > new Date()
-    if (isAlive) {
-      // Resume: send user back to Stripe
-      window.location.href = hold.url
-    } else {
-      // Expired: clear storage, show Session Expired screen, redirect after 3s
-      sessionStorage.removeItem('tt_hold')
-      setExpired(true)
-      setTimeout(() => navigate('/'), 3000)
-    }
-  }, [])
-
-  // ── Back button on YOUR page (before Stripe) ─────────────
-  const handleBack = async () => {
-    const raw = sessionStorage.getItem('tt_hold')
-    sessionStorage.removeItem('tt_hold')
-    if (raw) {
-      const { sessionId } = JSON.parse(raw)
-      await axios.post(
-        \`\${BASE}/site/checkout/session/\${sessionId}/release-hold\`
-      ).catch(() => {})
-    }
-    // Never use navigate(-1) — history[-1] may be the Stripe page
-    navigate(\`/events/\${eventId}\`)
-  }
-
-  if (expired) return <SessionExpiredScreen />
-
-  return (
-    <button onClick={handleBack}>Back</button>
-  )
-}`,
-          },
-        ],
-        errorCodes: null,
       },
     ],
   },

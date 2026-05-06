@@ -1,4 +1,4 @@
-import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, HelpCircle, RefreshCcw, RotateCcw, Clock, ChevronDown } from "lucide-react"
+import { X, Sun, Moon, Monitor, Activity, Globe, ShoppingCart, RefreshCcw, RotateCcw, Clock, ChevronDown } from "lucide-react"
 import { useState } from "react"
 import { useTheme } from "@/components/theme-provider.jsx"
 import { MethodBadge } from "@/components/MethodBadge"
@@ -107,21 +107,6 @@ function SidebarContent({ sections, activeId, onNavClick }) {
           )
         })}
 
-        {/* Support / Questions */}
-        <div className="mb-0.5">
-          <div className="sidebar-nav-section">
-            <HelpCircle size={12} />
-            Support
-          </div>
-          <a
-            href="#questions"
-            onClick={(e) => { e.preventDefault(); onNavClick("questions") }}
-            className={cn("sidebar-nav-item", activeId === "questions" && "active")}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold text-muted-foreground">?</span>
-            <span className="min-w-0 truncate">Questions</span>
-          </a>
-        </div>
       </nav>
 
       {/* Base URL footer */}

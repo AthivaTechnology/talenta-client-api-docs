@@ -33,15 +33,6 @@ export function App() {
     const READING_LINE = 200 // px from viewport top
 
     const getActiveId = () => {
-      // If questions section is visible in the viewport, activate it
-      const questionsEl = document.getElementById("questions")
-      if (questionsEl) {
-        const rect = questionsEl.getBoundingClientRect()
-        if (rect.top < window.innerHeight * 0.7 && rect.bottom > 0) {
-          return "questions"
-        }
-      }
-
       const elements = document.querySelectorAll("[data-endpoint-id]")
       let best = null
       let bestTop = -Infinity
@@ -245,36 +236,6 @@ export function App() {
               </section>
             )
           })}
-
-          {/* ── Questions (anchor for sidebar link) ───────────── */}
-          <section className="mb-16" id="questions" data-endpoint-id="questions">
-            <div className="flex items-center gap-2 border-b border-border pb-3 mb-8">
-              <span className="text-[10px] font-bold">?</span>
-              <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Support</h2>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-8">
-              <h3 className="mb-2 text-lg font-semibold text-foreground">Have a question about the API?</h3>
-              <p className="mb-6 max-w-xl text-[14px] leading-relaxed text-muted-foreground">
-                If you run into issues integrating with the Talenta API, including unexpected responses,
-                authentication errors, or anything unclear in this documentation, reach out and
-                we'll help you get unblocked.
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border border-border bg-muted/30 p-4">
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Email Support</p>
-                  <a href="mailto:support@athivaone.com" className="block font-mono text-sm text-primary hover:underline">
-                    support@athivaone.com
-                  </a>
-                  <p className="mt-1 text-xs text-muted-foreground">Include your client domain and request ID</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/30 p-4">
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Base URL</p>
-                  <code className="block break-all font-mono text-sm text-foreground">{BASE_URL}</code>
-                  <p className="mt-1 text-xs text-muted-foreground">All endpoints are relative to this URL</p>
-                </div>
-              </div>
-            </div>
-          </section>
 
         </div>
       </main>
